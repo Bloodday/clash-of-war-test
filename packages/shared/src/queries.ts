@@ -1,6 +1,9 @@
 import {
   BUILDING_DEFS,
   GRID_SIZE,
+  HEAL_COST_PER_LEVEL,
+  HEAL_SECONDS_PER_LEVEL,
+  TICK_RATE,
   RESOURCES,
   ROLE_DEFS,
   type BuildingLevelDef,
@@ -162,4 +165,40 @@ export function isAreaFree(
     if (x < b.x + s && x + size > b.x && y < b.y + s && y + size > b.y) return false;
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Enfermería
+// ---------------------------------------------------------------------------
+
+/** Soldados heridos que ocupan cama en una enfermería. */
+export function getPatients(state: GameState, infirmaryId: number): Villager[] {
+  return state.villagers.filter((v) => v.task.kind === 'wounded' && v.task.infirmaryId === infirmaryId);
+}
+
+/** Camas libres en una enfermería (0 si está en obras de nueva planta). */
+export function freeBeds(state: GameState, b: Building): number {
+  const beds = currentLevelDef(b)?.beds ?? 0;
+  return Math.max(0, beds - getPatients(state, b.id).length);
+}
+
+/** Pacientes de una enfermería que todavía no se están curando. */
+export function waitingPatients(state: GameState, b: Building): Villager[] {
+  const healing = new Set(b.healing?.patientIds ?? []);
+  return getPatients(state, b.id).filter((v) => !healing.has(v.id));
+}
+
+/** Coste de curar a unos pacientes: crece con su número y su nivel. */
+export function healCost(patients: Villager[]): Cost {
+  const levels = patients.reduce((n, v) => n + Math.max(1, v.roleLevel), 0);
+  const out: Cost = {};
+  for (const r of RESOURCES) if (HEAL_COST_PER_LEVEL[r]) out[r] = HEAL_COST_PER_LEVEL[r]! * levels;
+  return out;
+}
+
+/** Ticks que tarda en curarlos una enfermería (más soldados y de más nivel, más tiempo). */
+export function healTicks(patients: Villager[], infirmary: Building): number {
+  const levels = patients.reduce((n, v) => n + Math.max(1, v.roleLevel), 0);
+  const speed = currentLevelDef(infirmary)?.healSpeed ?? 1;
+  return Math.max(1, Math.round((levels * HEAL_SECONDS_PER_LEVEL * TICK_RATE) / speed));
 }

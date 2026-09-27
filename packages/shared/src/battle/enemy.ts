@@ -1,14 +1,14 @@
-import { BUILDING_DEFS, GRID_SIZE, RESOURCES, VILLAGER_NAMES, type BuildingType, type Cost, type ResourceId } from '../data';
+import { BUILDING_DEFS, GRID_SIZE, MONSTER_DEFS, RESOURCES, VILLAGER_NAMES, type BuildingType, type Cost, type MonsterId, type ResourceId } from '../data';
 import { producedResource } from '../queries';
 import { nextRandom } from '../rng';
 import type { GameState } from '../state';
-import type { MilitaryRole } from './types';
+import type { BattleKind, CampStructure, MilitaryRole, StructureType, UnitKind } from './types';
 
 // Aldeas a las que atacar. Mientras no haya servidor ni otros jugadores, se
 // generan de forma procedural (y determinista) según el nivel de ayuntamiento.
 
 export interface BaseBuilding {
-  type: BuildingType;
+  type: StructureType;
   x: number;
   y: number;
   level: number;
@@ -16,10 +16,25 @@ export interface BaseBuilding {
 }
 
 export interface DefenderBase {
+  kind: BattleKind;
   name: string;
-  townHall: number;
+  townHall: number; // nivel del ayuntamiento (o del campamento)
   buildings: BaseBuilding[];
-  defenders: { name: string; role: MilitaryRole; level: number }[];
+  defenders: { name: string; role: UnitKind; level: number }[];
+}
+
+/** Estructuras de los campamentos de monstruos (vida a nivel 1; +35 % por nivel). */
+export const CAMP_STRUCTURES: Record<CampStructure, { name: string; size: number; hp: number; attack?: { damage: number; range: number; interval: number } }> = {
+  campTent: { name: 'Tienda', size: 2, hp: 320 },
+  campChest: { name: 'Cofre del tesoro', size: 1, hp: 160 },
+  campTotem: { name: 'Tótem de huesos', size: 1, hp: 420, attack: { damage: 11, range: 6, interval: 1.4 } },
+};
+
+export const levelScale = (level: number) => 1 + 0.35 * (Math.max(1, level) - 1);
+
+/** Tamaño de una estructura cualquiera (edificio de aldea o de campamento). */
+export function structureSize(type: StructureType): number {
+  return type in CAMP_STRUCTURES ? CAMP_STRUCTURES[type as CampStructure].size : BUILDING_DEFS[type as BuildingType].size;
 }
 
 /** Botín total disponible en una base. */
@@ -117,13 +132,16 @@ export function generateEnemyBase(seed: number, townHall: number): DefenderBase 
     const n = type === 'house' ? Math.max(1, maxCount(type, th) - 1) : maxCount(type, th);
     for (let i = 0; i < n; i++) tryPlace(type, outside, ring);
   }
+  for (const type of ['infirmary', 'siegeWorkshop'] as BuildingType[]) {
+    for (let i = 0; i < Math.min(1, maxCount(type, th)); i++) tryPlace(type, outside, ring);
+  }
 
   // Botín: una parte en el ayuntamiento y los almacenes, el resto en los productores.
   const total = 220 * Math.pow(th, 1.5);
   const stores = buildings.filter((b) => b.type === 'townHall' || b.type === 'storehouse');
   for (const r of RESOURCES) {
     const amount = Math.round(total * (0.8 + rand() * 0.4));
-    const producers = buildings.filter((b) => producedResource(b.type) === r);
+    const producers = buildings.filter((b) => producedResource(b.type as BuildingType) === r);
     const inProducers = producers.length ? amount * 0.4 : 0;
     for (const p of producers) p.loot[r] = Math.round(inProducers / producers.length);
     for (const s of stores) s.loot[r] = Math.round((amount - inProducers) / stores.length);
@@ -138,7 +156,64 @@ export function generateEnemyBase(seed: number, townHall: number): DefenderBase 
     defenders.push({ name: pickName(rand), role, level });
   }
 
-  return { name: `Aldea de ${pickName(rand)}`, townHall: th, buildings, defenders };
+  return { kind: 'village', name: `Aldea de ${pickName(rand)}`, townHall: th, buildings, defenders };
+}
+
+const CAMP_NAMES = ['Cripta del Norte', 'Hondonada de los Huesos', 'Campamento Maldito', 'Claro de las Calaveras', 'Túmulo Olvidado', 'Guarida Sombría'];
+
+/**
+ * Campamento de monstruos: tiendas y cofres con botín alrededor de una hoguera,
+ * tótems que lanzan magia y esqueletos de guardia. Más nivel, más monstruos y
+ * más fuertes (y mejor botín).
+ */
+export function generateMonsterCamp(seed: number, level: number): DefenderBase {
+  const lvl = Math.max(1, Math.min(5, level));
+  const rng = { rng: seed >>> 0 || 1 };
+  const rand = () => nextRandom(rng);
+  const buildings: BaseBuilding[] = [];
+  const occupied = new Set<string>();
+  const c = GRID_SIZE / 2;
+  const fits = (x: number, y: number, size: number) => {
+    for (let j = y - 1; j < y + size + 1; j++) for (let i = x - 1; i < x + size + 1; i++) if (occupied.has(`${i},${j}`)) return false;
+    // Hueco libre en el centro para la hoguera.
+    return !(x < c + 2 && x + size > c - 2 && y < c + 2 && y + size > c - 2);
+  };
+  const place = (type: CampStructure, radius: number, loot: Cost = {}) => {
+    const size = CAMP_STRUCTURES[type].size;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const a = rand() * Math.PI * 2;
+      const r = radius * (0.7 + rand() * 0.5);
+      const x = Math.round(c + Math.cos(a) * r - size / 2);
+      const y = Math.round(c + Math.sin(a) * r - size / 2);
+      if (!fits(x, y, size)) continue;
+      for (let j = y; j < y + size; j++) for (let i = x; i < x + size; i++) occupied.add(`${i},${j}`);
+      buildings.push({ type, x, y, level: lvl, loot });
+      return;
+    }
+  };
+
+  // Botín: sobre todo en los cofres; las tiendas guardan un poco.
+  const total = 180 * Math.pow(lvl, 1.4);
+  const chests = 2 + Math.floor(lvl / 2);
+  for (let i = 0; i < chests; i++) {
+    const loot: Cost = {};
+    for (const r of RESOURCES) loot[r] = Math.round(((total * 0.75) / chests) * (0.7 + rand() * 0.6) * (r === 'gold' ? 1.3 : 1));
+    place('campChest', 4, loot);
+  }
+  for (let i = 0; i < 2 + Math.floor(lvl / 2); i++) place('campTent', 7, { food: Math.round((total * 0.25) / 3), wood: Math.round((total * 0.15) / 3) });
+  for (let i = 0; i < Math.floor((lvl + 1) / 2) - (lvl === 1 ? 1 : 0); i++) place('campTotem', 5.5);
+
+  const defenders: DefenderBase['defenders'] = [];
+  const add = (role: MonsterId, n: number) => {
+    for (let i = 0; i < n; i++) defenders.push({ name: MONSTER_DEFS[role].name, role, level: lvl });
+  };
+  add('minion', 2 + lvl);
+  add('skeletonWarrior', 1 + Math.floor(lvl / 2));
+  add('skeletonRogue', Math.floor((lvl + 1) / 2));
+  if (lvl >= 2) add('skeletonMage', Math.floor(lvl / 2));
+  if (lvl >= 3) add('boneLord', 1);
+
+  return { kind: 'camp', name: CAMP_NAMES[Math.floor(rand() * CAMP_NAMES.length)]!, townHall: lvl, buildings, defenders };
 }
 
 function pickName(rand: () => number): string {
@@ -163,5 +238,5 @@ export function baseFromVillage(state: GameState, name: string, lootFraction = 0
   const defenders = state.villagers
     .filter((v) => v.role && v.role !== 'builder' && v.task.kind === 'idle')
     .map((v) => ({ name: v.name, role: v.role as MilitaryRole, level: v.roleLevel }));
-  return { name, townHall: th?.level ?? 1, buildings, defenders };
+  return { kind: 'village', name, townHall: th?.level ?? 1, buildings, defenders };
 }

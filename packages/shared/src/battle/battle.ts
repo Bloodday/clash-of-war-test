@@ -1,7 +1,7 @@
-import { BUILDING_DEFS, RESOURCES, ROLE_DEFS, TICK_RATE, type ResourceId } from '../data';
-import { getStorageCapacity } from '../queries';
+import { BUILDING_DEFS, MONSTER_DEFS, RESOURCES, ROLE_DEFS, type BuildingType, type Cost, type MonsterId, type ResourceId } from '../data';
+import { freeBeds, getStorageCapacity } from '../queries';
 import type { GameState } from '../state';
-import type { DefenderBase } from './enemy';
+import { CAMP_STRUCTURES, levelScale, type DefenderBase } from './enemy';
 import { CELL_BLOCKED, CELL_FREE, CELL_WALL, cellAt, cellIndex, createGrid, findPath, inGrid, type Grid } from './pathfinding';
 import {
   BATTLE_SECONDS,
@@ -12,10 +12,13 @@ import {
   type BattleResult,
   type BattleState,
   type BattleUnit,
+  type CampStructure,
   type MilitaryRole,
   type ProjectileKind,
   type ReserveUnit,
   type Side,
+  type StructureAttack,
+  type UnitKind,
 } from './types';
 
 // ---------------------------------------------------------------------------
@@ -33,19 +36,49 @@ export const COMBAT: Record<MilitaryRole, CombatStats> = {
   warrior: { speed: 1.9, interval: 1.0, aggro: 5 },
   archer: { speed: 1.7, interval: 1.1, aggro: 7, projectile: 'bolt' },
   healer: { speed: 1.6, interval: 1.2, aggro: 7, projectile: 'heal' },
+  catapult: { speed: 0.8, interval: 3.5, aggro: 12, projectile: 'boulder' },
 };
+
+/** Radio de daño en área (celdas) de las rocas de catapulta y de la magia. */
+export const CATAPULT_SPLASH = 1.3;
+export const MAGIC_SPLASH = 0.8;
+
+export const isMonster = (k: UnitKind): k is MonsterId => k in MONSTER_DEFS;
+
+/** Comportamiento de combate de una unidad (soldado o monstruo). */
+interface Profile {
+  aggro: number;
+  projectile?: ProjectileKind;
+  heals: boolean;
+  buildingsOnly: boolean; // catapultas: solo atacan edificios
+  splash: number;
+}
+
+function profile(role: UnitKind): Profile {
+  if (isMonster(role)) {
+    const d = MONSTER_DEFS[role];
+    const magic = role === 'skeletonMage';
+    return { aggro: d.aggro, projectile: d.ranged ? (magic ? 'magic' : 'bolt') : undefined, heals: false, buildingsOnly: false, splash: magic ? MAGIC_SPLASH : 0 };
+  }
+  const c = COMBAT[role];
+  return {
+    aggro: c.aggro,
+    projectile: c.projectile,
+    heals: role === 'healer',
+    buildingsOnly: role === 'catapult',
+    splash: role === 'catapult' ? CATAPULT_SPLASH : 0,
+  };
+}
 
 /** Los ejércitos son pequeños (cada soldado es un aldeano): pegan fuerte a los edificios. */
 export const BUILDING_DAMAGE_MULT = 3;
 export const TOWER_INTERVAL = 1.0;
 /** Distancia mínima a cualquier edificio para desplegar tropas (celdas). */
 export const DEPLOY_MARGIN = 1;
-/** Segundos de recuperación por nivel de un soldado caído. */
-export const WOUNDED_SECONDS_PER_LEVEL = 45;
 
 const DT = 1 / BATTLE_TICK_RATE;
 const UNIT_RADIUS = 0.3;
-const PROJECTILE_SPEED: Record<ProjectileKind, number> = { arrow: 14, bolt: 16, heal: 10 };
+const PROJECTILE_SPEED: Record<ProjectileKind, number> = { arrow: 14, bolt: 16, heal: 10, boulder: 7, magic: 11 };
 
 const secondsToTicks = (s: number) => Math.max(1, Math.round(s * BATTLE_TICK_RATE));
 
@@ -60,7 +93,12 @@ export function availableArmy(state: GameState): ReserveUnit[] {
     .map((v) => ({ villagerId: v.id, name: v.name, role: v.role as MilitaryRole, level: v.roleLevel }));
 }
 
-function unitStats(role: MilitaryRole, level: number) {
+function unitStats(role: UnitKind, level: number) {
+  if (isMonster(role)) {
+    const d = MONSTER_DEFS[role];
+    const k = levelScale(level);
+    return { hp: Math.round(d.hp * k), damage: Math.round(d.damage * k), range: d.range, speed: d.speed, interval: secondsToTicks(d.interval) };
+  }
   const def = ROLE_DEFS[role].levels[Math.max(1, Math.min(level, ROLE_DEFS[role].levels.length)) - 1]!;
   const c = COMBAT[role];
   return { hp: def.hp, damage: def.damage, range: def.range, speed: c.speed, interval: secondsToTicks(c.interval) };
@@ -69,7 +107,7 @@ function unitStats(role: MilitaryRole, level: number) {
 function makeUnit(
   b: BattleState,
   side: Side,
-  role: MilitaryRole,
+  role: UnitKind,
   level: number,
   name: string,
   x: number,
@@ -107,12 +145,14 @@ function makeUnit(
   return unit;
 }
 
-export function createBattle(base: DefenderBase, army: ReserveUnit[]): BattleState {
+export function createBattle(base: DefenderBase, army: ReserveUnit[], campId: number | null = null): BattleState {
   const b: BattleState = {
     version: 1,
     tick: 0,
     nextId: 1,
     phase: 'scouting',
+    kind: base.kind,
+    campId,
     enemyName: base.name,
     enemyTownHall: base.townHall,
     timeLimitTicks: BATTLE_SECONDS * BATTLE_TICK_RATE,
@@ -128,19 +168,40 @@ export function createBattle(base: DefenderBase, army: ReserveUnit[]): BattleSta
     events: [],
   };
   for (const bb of base.buildings) {
-    const def = BUILDING_DEFS[bb.type];
-    const hp = def.levels[Math.max(1, bb.level) - 1]!.hp;
+    let size: number;
+    let hp: number;
+    let attack: StructureAttack | null = null;
+    if (bb.type in CAMP_STRUCTURES) {
+      const def = CAMP_STRUCTURES[bb.type as CampStructure];
+      size = def.size;
+      hp = Math.round(def.hp * levelScale(bb.level));
+      if (def.attack) {
+        attack = {
+          damage: Math.round(def.attack.damage * levelScale(bb.level)),
+          range: def.attack.range,
+          interval: secondsToTicks(def.attack.interval),
+          projectile: 'magic',
+        };
+      }
+    } else {
+      const def = BUILDING_DEFS[bb.type as BuildingType];
+      const lvl = def.levels[Math.max(1, bb.level) - 1]!;
+      size = def.size;
+      hp = lvl.hp;
+      if (lvl.damage && lvl.range) attack = { damage: lvl.damage, range: lvl.range, interval: secondsToTicks(TOWER_INTERVAL), projectile: 'arrow' };
+    }
     b.buildings.push({
       id: b.nextId++,
       type: bb.type,
       level: bb.level,
       x: bb.x,
       y: bb.y,
-      size: def.size,
+      size,
       hp,
       maxHp: hp,
       loot: { ...bb.loot },
       cooldown: 0,
+      attack,
       destroyed: false,
     });
   }
@@ -149,7 +210,7 @@ export function createBattle(base: DefenderBase, army: ReserveUnit[]): BattleSta
   const th = b.buildings.find((x) => x.type === 'townHall');
   const cx = th ? th.x + th.size / 2 : 20;
   const cy = th ? th.y + th.size / 2 : 20;
-  const posts = freeCellsAround(grid, cx, cy, base.defenders.length);
+  const posts = freeCellsAround(grid, cx, cy, base.defenders.length, base.kind === 'camp' ? 1.5 : 3);
   base.defenders.forEach((d, i) => {
     const p = posts[i] ?? { x: cx, y: cy + 3 };
     const u = makeUnit(b, 'defender', d.role, d.level, d.name, p.x, p.y, null);
@@ -159,7 +220,7 @@ export function createBattle(base: DefenderBase, army: ReserveUnit[]): BattleSta
 }
 
 /** Celdas libres más cercanas a un punto, separadas entre sí. */
-function freeCellsAround(g: Grid, cx: number, cy: number, n: number): { x: number; y: number }[] {
+function freeCellsAround(g: Grid, cx: number, cy: number, n: number, minDist = 3): { x: number; y: number }[] {
   const cells: { x: number; y: number; d: number }[] = [];
   for (let y = 0; y < g.size; y++)
     for (let x = 0; x < g.size; x++) {
@@ -170,8 +231,8 @@ function freeCellsAround(g: Grid, cx: number, cy: number, n: number): { x: numbe
   const out: { x: number; y: number }[] = [];
   for (const c of cells) {
     if (out.length >= n) break;
-    if (c.d < 3) continue;
-    if (out.every((o) => Math.hypot(o.x - c.x, o.y - c.y) >= 1.5)) out.push({ x: c.x, y: c.y });
+    if (c.d < minDist) continue;
+    if (out.every((o) => Math.hypot(o.x - c.x, o.y - c.y) >= 1.2)) out.push({ x: c.x, y: c.y });
   }
   return out;
 }
@@ -295,7 +356,7 @@ export function stepBattle(b: BattleState): void {
   b.tick++;
 
   for (const u of b.units) if (u.state !== 'dead') updateUnit(b, u);
-  for (const bld of b.buildings) if (bld.hp > 0 && bld.type === 'archerTower') updateTower(b, bld);
+  for (const bld of b.buildings) if (bld.hp > 0 && bld.attack) updateTower(b, bld);
   updateProjectiles(b);
   separate(b);
   resolveDeaths(b);
@@ -327,7 +388,7 @@ function updateUnit(b: BattleState, u: BattleUnit): void {
   if (!target) {
     if (u.side === 'defender' && u.post && Math.hypot(u.post.x - u.x, u.post.y - u.y) > 0.4) {
       moveTo(b, u, { kind: 'point', x: u.post.x, y: u.post.y }, 'post');
-    } else if (u.role === 'healer') {
+    } else if (profile(u.role).heals) {
       followAllies(b, u);
     } else {
       u.state = 'idle';
@@ -356,15 +417,25 @@ function chooseTarget(b: BattleState, u: BattleUnit): Target | null {
     u.order = { kind: 'auto' };
   }
 
-  if (u.role === 'healer') {
+  const prof = profile(u.role);
+  if (prof.heals) {
     const hurt = b.units
       .filter((o) => o.side === u.side && o.state !== 'dead' && o.id !== u.id && o.hp < o.maxHp)
-      .filter((o) => Math.hypot(o.x - u.x, o.y - u.y) <= COMBAT.healer.aggro)
+      .filter((o) => Math.hypot(o.x - u.x, o.y - u.y) <= prof.aggro)
       .sort((a, c) => a.hp / a.maxHp - c.hp / c.maxHp || a.id - c.id)[0];
     return hurt ? { kind: 'unit', unit: hurt } : null;
   }
 
-  const aggro = COMBAT[u.role].aggro;
+  const aggro = prof.aggro;
+  // Las catapultas solo disparan a edificios: el más cercano que no sea un muro.
+  if (prof.buildingsOnly) {
+    const current = findTarget(b, u.targetId);
+    if (current && current.kind === 'building' && !isDead(current)) return current;
+    const bld = b.buildings
+      .filter((x) => x.hp > 0 && x.type !== 'wall')
+      .sort((a, c) => distToBuilding(u.x, u.y, a) - distToBuilding(u.x, u.y, c) || a.id - c.id)[0];
+    return bld ? { kind: 'building', bld } : null;
+  }
   // Mantener el objetivo actual mientras siga siendo válido (evita cambiar a cada paso).
   const current = findTarget(b, u.targetId);
   if (current && !isDead(current)) {
@@ -456,7 +527,7 @@ function moveTo(b: BattleState, u: BattleUnit, goal: Goal, key: string): void {
       const wall = b.buildings.find((x) => x.id === cache.owner[idx]);
       if (wall && wall.hp > 0) {
         if (distToBuilding(u.x, u.y, wall) <= u.range + 0.35) {
-          if (u.role !== 'healer') attack(b, u, { kind: 'building', bld: wall });
+          if (!profile(u.role).heals) attack(b, u, { kind: 'building', bld: wall });
           else u.state = 'idle';
           return;
         }
@@ -473,7 +544,12 @@ function moveTo(b: BattleState, u: BattleUnit, goal: Goal, key: string): void {
   const dy = wp.y - u.y;
   const d = Math.hypot(dx, dy);
   const step = u.speed * DT;
-  if (d <= step) {
+  // Los puntos intermedios se dan por alcanzados a media celda: si varias unidades
+  // comparten camino, la separación les impediría llegar al centro exacto y se atascarían.
+  const last = u.path.length <= 1;
+  if (!last && d <= Math.max(step, 0.5)) {
+    u.path.shift();
+  } else if (d <= step) {
     u.x = wp.x;
     u.y = wp.y;
     if (next) u.path.shift();
@@ -493,12 +569,12 @@ function attack(b: BattleState, u: BattleUnit, t: Target): void {
   u.cooldown = u.interval;
   u.lastAttackTick = b.tick;
   const targetId = t.kind === 'unit' ? t.unit.id : t.bld.id;
-  const projectile = COMBAT[u.role].projectile;
-  if (!projectile) {
+  const prof = profile(u.role);
+  if (!prof.projectile) {
     applyHit(b, t, u.damage, u.id, true);
     return;
   }
-  spawnProjectile(b, projectile, u.x, u.y, 0.5, targetId, u.damage, u.side, u.id);
+  spawnProjectile(b, prof.projectile, u.x, u.y, u.role === 'catapult' ? 0.9 : 0.5, targetId, u.damage, u.side, u.id, prof.splash);
 }
 
 function spawnProjectile(
@@ -511,9 +587,10 @@ function spawnProjectile(
   amount: number,
   side: Side,
   sourceId: number,
+  splash = 0,
 ): void {
   const id = b.nextId++;
-  b.projectiles.push({ id, kind, x, y, sx: x, sy: y, height, targetId, speed: PROJECTILE_SPEED[kind], amount, side });
+  b.projectiles.push({ id, kind, x, y, sx: x, sy: y, height, targetId, speed: PROJECTILE_SPEED[kind], amount, splash, side });
   b.events.push({ kind: 'shoot', sourceId, projectileId: id });
 }
 
@@ -533,18 +610,18 @@ function updateTower(b: BattleState, bld: BattleBuilding): void {
     bld.cooldown--;
     return;
   }
-  const def = BUILDING_DEFS[bld.type].levels[bld.level - 1]!;
-  const range = def.range ?? 0;
+  const atk = bld.attack!;
   const cx = bld.x + bld.size / 2;
   const cy = bld.y + bld.size / 2;
   const target = b.units
     .filter((u) => u.side === 'attacker' && u.state !== 'dead')
     .map((u) => ({ u, d: Math.hypot(u.x - cx, u.y - cy) }))
-    .filter((e) => e.d <= range + bld.size / 2)
+    .filter((e) => e.d <= atk.range + bld.size / 2)
     .sort((a, c) => a.d - c.d || a.u.id - c.u.id)[0];
   if (!target) return;
-  bld.cooldown = secondsToTicks(TOWER_INTERVAL);
-  spawnProjectile(b, 'arrow', cx, cy, 2.6, target.u.id, def.damage ?? 0, 'defender', bld.id);
+  bld.cooldown = atk.interval;
+  const height = bld.type === 'archerTower' ? 2.6 : 1.4;
+  spawnProjectile(b, atk.projectile, cx, cy, height, target.u.id, atk.damage, 'defender', bld.id, atk.projectile === 'magic' ? MAGIC_SPLASH : 0);
 }
 
 function updateProjectiles(b: BattleState): void {
@@ -566,6 +643,7 @@ function updateProjectiles(b: BattleState): void {
         }
       } else {
         applyHit(b, t, p.amount, p.id, false);
+        if (p.splash > 0) splashDamage(b, p, pos.x, pos.y, t);
       }
       return false;
     }
@@ -573,6 +651,22 @@ function updateProjectiles(b: BattleState): void {
     p.y += (dy / d) * step;
     return true;
   });
+}
+
+/** Daño en área alrededor del impacto (a la mitad), sin repetir el objetivo principal. */
+function splashDamage(b: BattleState, p: { amount: number; splash: number; side: Side; id: number }, x: number, y: number, main: Target): void {
+  const half = p.amount * 0.5;
+  for (const u of b.units) {
+    if (u.side === p.side || u.state === 'dead' || (main.kind === 'unit' && main.unit === u)) continue;
+    if (Math.hypot(u.x - x, u.y - y) <= p.splash) applyHit(b, { kind: 'unit', unit: u }, half, p.id, false);
+  }
+  if (p.side === 'attacker') {
+    for (const bld of b.buildings) {
+      if (bld.hp <= 0 || (main.kind === 'building' && main.bld === bld)) continue;
+      if (distToBuilding(x, y, bld) <= p.splash) applyHit(b, { kind: 'building', bld }, half, p.id, false);
+    }
+  }
+  b.events.push({ kind: 'impact', x, y, radius: p.splash });
 }
 
 /** Evita que las unidades se amontonen en el mismo punto. */
@@ -609,15 +703,24 @@ function nudge(g: Grid, u: BattleUnit, dx: number, dy: number): void {
 }
 
 function resolveDeaths(b: BattleState): void {
+  let changed = false;
   for (const u of b.units) {
     if (u.state !== 'dead' && u.hp <= 0) {
       u.hp = 0;
       u.state = 'dead';
       u.path = [];
-      b.events.push({ kind: 'death', unitId: u.id });
+      // Los monstruos sueltan botín al caer.
+      const loot: Cost = {};
+      if (isMonster(u.role)) {
+        for (const [r, amount] of Object.entries(MONSTER_DEFS[u.role].loot) as [ResourceId, number][]) {
+          loot[r] = Math.round(amount * levelScale(u.level));
+          b.lootTaken[r] = (b.lootTaken[r] ?? 0) + loot[r]!;
+        }
+        changed = true;
+      }
+      b.events.push({ kind: 'death', unitId: u.id, loot });
     }
   }
-  let changed = false;
   for (const bld of b.buildings) {
     if (bld.destroyed || bld.hp > 0) continue;
     bld.destroyed = true;
@@ -632,10 +735,20 @@ function resolveDeaths(b: BattleState): void {
   if (!changed) return;
   b.gridVersion++;
   const counted = b.buildings.filter((x) => x.type !== 'wall');
-  const destroyed = counted.filter((x) => x.destroyed).length;
-  b.destruction = counted.length ? destroyed / counted.length : 1;
-  const thDown = b.buildings.some((x) => x.type === 'townHall' && x.destroyed);
-  const stars = (b.destruction >= 0.5 ? 1 : 0) + (thDown ? 1 : 0) + (b.destruction >= 1 ? 1 : 0);
+  let total = counted.length;
+  let done = counted.filter((x) => x.destroyed).length;
+  let objective: boolean;
+  if (b.kind === 'camp') {
+    // En los campamentos cuentan también los monstruos; la 2.ª estrella es acabar con todos.
+    const monsters = b.units.filter((u) => u.side === 'defender');
+    total += monsters.length;
+    done += monsters.filter((u) => u.state === 'dead').length;
+    objective = monsters.every((u) => u.state === 'dead');
+  } else {
+    objective = b.buildings.some((x) => x.type === 'townHall' && x.destroyed);
+  }
+  b.destruction = total ? done / total : 1;
+  const stars = (b.destruction >= 0.5 ? 1 : 0) + (objective ? 1 : 0) + (b.destruction >= 1 ? 1 : 0);
   if (stars > b.stars) {
     b.stars = stars;
     b.events.push({ kind: 'star', stars });
@@ -656,6 +769,9 @@ function endBattle(b: BattleState, reason: BattleResult['reason']): void {
       ...b.reserve.map((r) => r.villagerId),
     ],
     reason,
+    kind: b.kind,
+    campId: b.campId,
+    cleared: b.kind === 'camp' && b.units.filter((u) => u.side === 'defender').every((u) => u.state === 'dead'),
   };
   b.events.push({ kind: 'end' });
 }
@@ -666,9 +782,14 @@ function endBattle(b: BattleState, reason: BattleResult['reason']): void {
 
 /**
  * Aplica el resultado a la aldea del atacante: suma el botín (hasta llenar
- * los almacenes) y los soldados caídos vuelven heridos y deben recuperarse.
+ * los almacenes) y reparte a los caídos en las camas de las enfermerías,
+ * primero los de más nivel. Los que no caben mueren y dejan la aldea.
+ * Si era un campamento y se acabó con todos los monstruos, desaparece.
  */
-export function applyBattleResult(state: GameState, result: BattleResult): { gained: Record<ResourceId, number> } {
+export function applyBattleResult(
+  state: GameState,
+  result: BattleResult,
+): { gained: Record<ResourceId, number>; wounded: number[]; dead: number[] } {
   const cap = getStorageCapacity(state);
   const gained: Record<ResourceId, number> = { gold: 0, wood: 0, food: 0 };
   for (const r of RESOURCES) {
@@ -677,12 +798,27 @@ export function applyBattleResult(state: GameState, result: BattleResult): { gai
     gained[r] = Math.min(amount, room);
     state.resources[r] += gained[r];
   }
-  for (const id of result.fallen) {
-    const v = state.villagers.find((x) => x.id === id);
-    if (!v) continue;
-    const ticks = Math.round(WOUNDED_SECONDS_PER_LEVEL * Math.max(1, v.roleLevel) * TICK_RATE);
-    v.task = { kind: 'wounded', remainingTicks: ticks, totalTicks: ticks };
-  }
-  return { gained };
-}
 
+  const fallen = result.fallen
+    .map((id) => state.villagers.find((v) => v.id === id))
+    .filter((v): v is NonNullable<typeof v> => !!v)
+    .sort((a, c) => c.roleLevel - a.roleLevel || a.id - c.id);
+  const infirmaries = state.buildings.filter((b) => b.type === 'infirmary').sort((a, c) => a.id - c.id);
+  const wounded: number[] = [];
+  const dead: number[] = [];
+  for (const v of fallen) {
+    const bed = infirmaries.find((b) => freeBeds(state, b) > 0);
+    if (bed) {
+      v.task = { kind: 'wounded', infirmaryId: bed.id };
+      wounded.push(v.id);
+    } else {
+      dead.push(v.id);
+    }
+  }
+  if (dead.length) state.villagers = state.villagers.filter((v) => !dead.includes(v.id));
+
+  if (result.kind === 'camp' && result.cleared && result.campId !== null) {
+    state.camps = state.camps.filter((c) => c.id !== result.campId);
+  }
+  return { gained, wounded, dead };
+}

@@ -1,4 +1,4 @@
-import type { BuildingType, Cost, RoleId } from '../data';
+import type { BuildingType, Cost, MonsterId, RoleId } from '../data';
 
 // Estado de una batalla. Igual que el de la aldea, es un objeto plano y
 // serializable, y solo cambia mediante comandos + pasos de simulación, para
@@ -9,10 +9,26 @@ export const BATTLE_SECONDS = 180;
 
 export type Side = 'attacker' | 'defender';
 export type MilitaryRole = Exclude<RoleId, 'builder'>;
+/** Tipo de unidad en batalla: un soldado de la aldea o un monstruo. */
+export type UnitKind = MilitaryRole | MonsterId;
+
+/** Estructuras propias de los campamentos de monstruos. */
+export type CampStructure = 'campTent' | 'campChest' | 'campTotem';
+export type StructureType = BuildingType | CampStructure;
+
+export type BattleKind = 'village' | 'camp';
+
+/** Ataque de una estructura defensiva (torres, tótems). */
+export interface StructureAttack {
+  damage: number;
+  range: number;
+  interval: number; // ticks
+  projectile: ProjectileKind;
+}
 
 export interface BattleBuilding {
   id: number;
-  type: BuildingType;
+  type: StructureType;
   level: number;
   x: number;
   y: number;
@@ -21,6 +37,7 @@ export interface BattleBuilding {
   maxHp: number;
   loot: Cost; // botín que se obtiene al destruirlo
   cooldown: number; // ticks hasta el próximo disparo (defensas)
+  attack: StructureAttack | null;
   destroyed: boolean;
 }
 
@@ -36,7 +53,7 @@ export interface BattleUnit {
   side: Side;
   villagerId: number | null; // aldeano del jugador (atacantes) o null (defensores generados)
   name: string;
-  role: MilitaryRole;
+  role: UnitKind;
   level: number;
   x: number; // posición continua en celdas
   y: number;
@@ -58,7 +75,7 @@ export interface BattleUnit {
   lastAttackTick: number;
 }
 
-export type ProjectileKind = 'arrow' | 'bolt' | 'heal';
+export type ProjectileKind = 'arrow' | 'bolt' | 'heal' | 'boulder' | 'magic';
 
 export interface Projectile {
   id: number;
@@ -71,6 +88,7 @@ export interface Projectile {
   targetId: number;
   speed: number;
   amount: number; // daño o curación
+  splash: number; // radio de daño en área (0 = solo el objetivo)
   side: Side;
 }
 
@@ -79,7 +97,8 @@ export type BattleEvent =
   | { kind: 'hit'; targetId: number; sourceId: number; amount: number; melee: boolean }
   | { kind: 'heal'; targetId: number; amount: number }
   | { kind: 'shoot'; sourceId: number; projectileId: number }
-  | { kind: 'death'; unitId: number }
+  | { kind: 'death'; unitId: number; loot: Cost }
+  | { kind: 'impact'; x: number; y: number; radius: number }
   | { kind: 'destroyed'; buildingId: number; loot: Cost }
   | { kind: 'star'; stars: number }
   | { kind: 'end' };
@@ -95,9 +114,13 @@ export interface BattleResult {
   stars: number;
   destruction: number; // 0..1
   loot: Cost;
-  fallen: number[]; // aldeanos del jugador que cayeron (vuelven heridos)
+  fallen: number[]; // aldeanos del jugador que cayeron (heridos si hay camas; si no, mueren)
   survivors: number[];
   reason: 'time' | 'destroyed' | 'noTroops' | 'surrender';
+  kind: BattleKind;
+  campId: number | null;
+  /** Campamentos: todos los monstruos han caído (el campamento desaparece). */
+  cleared: boolean;
 }
 
 export interface BattleState {
@@ -105,6 +128,8 @@ export interface BattleState {
   tick: number;
   nextId: number;
   phase: 'scouting' | 'fighting' | 'ended';
+  kind: BattleKind;
+  campId: number | null;
   enemyName: string;
   enemyTownHall: number;
   timeLimitTicks: number;

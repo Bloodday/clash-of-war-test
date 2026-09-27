@@ -1,10 +1,10 @@
-import { BUILDING_DEFS, GRID_SIZE, VILLAGER_NAMES, type BuildingType, type ResourceId, type RoleId } from './data';
+import { BUILDING_DEFS, CAMP_SPAWN_SECONDS, GRID_SIZE, TICK_RATE, VILLAGER_NAMES, type BuildingType, type ResourceId, type RoleId } from './data';
 import { nextRandom } from './rng';
 
 // El estado es un objeto plano y serializable: se guarda tal cual en
 // localStorage hoy, y mañana lo validará/sincronizará el servidor.
 
-export const STATE_VERSION = 3;
+export const STATE_VERSION = 4;
 
 export interface Construction {
   targetLevel: number;
@@ -19,6 +19,21 @@ export interface Recruit {
   totalTicks: number;
 }
 
+/** Curación en curso en una enfermería. */
+export interface HealJob {
+  remainingTicks: number;
+  totalTicks: number;
+  patientIds: number[];
+}
+
+/** Campamento de monstruos que se puede atacar para conseguir botín. */
+export interface MonsterCamp {
+  id: number;
+  seed: number;
+  level: number;
+  slot: number; // índice en CAMP_SLOTS
+}
+
 export interface Building {
   id: number;
   type: BuildingType;
@@ -29,13 +44,14 @@ export interface Building {
   hp: number; // vida actual (0 = destruido; los aldeanos lo reparan)
   stored: number; // recursos acumulados sin recolectar (solo productores)
   recruits: Recruit[]; // cola de reclutamiento (solo posadas)
+  healing: HealJob | null; // curación en curso (solo enfermerías)
 }
 
 export type VillagerTask =
   | { kind: 'idle' }
   | { kind: 'build'; buildingId: number }
   | { kind: 'repair'; buildingId: number }
-  | { kind: 'wounded'; remainingTicks: number; totalTicks: number } // cayó en batalla: se recupera
+  | { kind: 'wounded'; infirmaryId: number } // cayó en batalla: ocupa una cama hasta que lo curen
   | {
       kind: 'train';
       buildingId: number;
@@ -61,6 +77,8 @@ export interface GameState {
   resources: Record<ResourceId, number>;
   buildings: Building[];
   villagers: Villager[];
+  camps: MonsterCamp[];
+  nextCampTick: number; // tick en el que aparece el próximo campamento
 }
 
 export function allocId(state: GameState): number {
@@ -81,7 +99,7 @@ export function maxHp(b: Pick<Building, 'type' | 'level'>): number {
 }
 
 function addBuilt(state: GameState, type: BuildingType, x: number, y: number): Building {
-  const building: Building = { id: allocId(state), type, x, y, level: 1, construction: null, hp: 0, stored: 0, recruits: [] };
+  const building: Building = { id: allocId(state), type, x, y, level: 1, construction: null, hp: 0, stored: 0, recruits: [], healing: null };
   building.hp = maxHp(building);
   state.buildings.push(building);
   return building;
@@ -96,6 +114,8 @@ export function createInitialState(seed = 12345): GameState {
     resources: { gold: 500, wood: 500, food: 300 },
     buildings: [],
     villagers: [],
+    camps: [],
+    nextCampTick: CAMP_SPAWN_SECONDS * TICK_RATE,
   };
   const c = GRID_SIZE / 2;
   addBuilt(state, 'townHall', c - 2, c - 2);
@@ -107,6 +127,8 @@ export function createInitialState(seed = 12345): GameState {
   createVillager(state, 'builder', 1);
   createVillager(state, 'builder', 1);
   createVillager(state);
+  // Un campamento de monstruos pequeño para empezar.
+  state.camps.push({ id: allocId(state), seed: (seed * 7919) >>> 0, level: 1, slot: 0 });
   return state;
 }
 
@@ -115,6 +137,7 @@ export function createInitialState(seed = 12345): GameState {
  * se reconoce.
  *   v1 → v2: sin trabajadores; vida y depósito en los edificios.
  *   v2 → v3: los civiles pasan a ser albañiles; colas de reclutamiento.
+ *   v3 → v4: enfermerías (los heridos antiguos quedan curados) y campamentos de monstruos.
  */
 export function migrateState(raw: unknown): GameState | null {
   const s = raw as { version: number; buildings: Building[]; villagers: Villager[] } | null;
@@ -140,6 +163,14 @@ export function migrateState(raw: unknown): GameState | null {
       }
     }
     s.version = 3;
+  }
+  if (s.version === 3) {
+    const m = s as unknown as GameState & { version: number };
+    for (const b of m.buildings) b.healing = null;
+    for (const v of m.villagers) if (v.task.kind === 'wounded') v.task = { kind: 'idle' };
+    m.camps = [{ id: m.nextId++, seed: (m.rng * 7919) >>> 0, level: 1, slot: 0 }];
+    m.nextCampTick = m.tick + CAMP_SPAWN_SECONDS * TICK_RATE;
+    s.version = 4;
   }
   return s as unknown as GameState;
 }

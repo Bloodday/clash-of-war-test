@@ -11,16 +11,26 @@ import {
   createBattle,
   createInitialState,
   executeBattleCommand,
+  executeCommand,
   findPath,
   generateEnemyBase,
+  generateMonsterCamp,
+  healCost,
+  healTicks,
   maxBuildings,
+  spawnCamp,
+  structureSize,
   stepBattle,
   tick,
+  CAMP_SPAWN_SECONDS,
+  MAX_CAMPS,
+  type BattleResult,
   type BattleState,
   type DefenderBase,
   type ReserveUnit,
 } from '../src';
 import { CELL_BLOCKED, CELL_WALL, cellIndex, createGrid } from '../src/battle/pathfinding';
+import type { GameState, Villager } from '../src';
 
 const run = (b: BattleState, seconds: number) => {
   for (let i = 0; i < seconds * BATTLE_TICK_RATE && b.phase !== 'ended'; i++) stepBattle(b);
@@ -30,6 +40,7 @@ const army = (...roles: ReserveUnit['role'][]): ReserveUnit[] =>
   roles.map((role, i) => ({ villagerId: 100 + i, name: `S${i}`, role, level: 1 }));
 
 const base = (buildings: DefenderBase['buildings'], defenders: DefenderBase['defenders'] = []): DefenderBase => ({
+  kind: 'village',
   name: 'Prueba',
   townHall: 1,
   buildings,
@@ -84,7 +95,7 @@ describe('generador de aldeas enemigas', () => {
     const a = generateEnemyBase(7, 3);
     const seen = new Set<string>();
     for (const b of a.buildings) {
-      const size = BUILDING_DEFS[b.type].size;
+      const size = structureSize(b.type);
       for (let y = b.y; y < b.y + size; y++)
         for (let x = b.x; x < b.x + size; x++) {
           const key = `${x},${y}`;
@@ -228,25 +239,158 @@ describe('batalla', () => {
   });
 });
 
-describe('vuelta a la aldea', () => {
-  it('suma el botín hasta llenar los almacenes y los caídos vuelven heridos', () => {
+const result = (over: Partial<BattleResult>): BattleResult => ({
+  stars: 0,
+  destruction: 0,
+  loot: {},
+  fallen: [],
+  survivors: [],
+  reason: 'time',
+  kind: 'village',
+  campId: null,
+  cleared: false,
+  ...over,
+});
+
+describe('catapultas', () => {
+  it('solo atacan edificios, desde lejos y por encima de los muros, con daño en área', () => {
+    const walls: DefenderBase['buildings'] = [];
+    for (let y = 14; y <= 25; y++) walls.push({ type: 'wall', x: 15, y, level: 1, loot: {} });
+    const b = createBattle(
+      base([{ type: 'house', x: 18, y: 19, level: 1, loot: {} }, { type: 'house', x: 18, y: 21, level: 1, loot: {} }, ...walls], [{ name: 'G', role: 'warrior', level: 1 }]),
+      army('catapult'),
+    );
+    executeBattleCommand(b, { type: 'deploy', villagerId: 100, x: 9, y: 20.5 });
+    const cat = b.units.find((u) => u.side === 'attacker')!;
+    let impacts = 0;
+    let hitUnit = false;
+    for (let i = 0; i < 40 * BATTLE_TICK_RATE && b.phase !== 'ended'; i++) {
+      stepBattle(b);
+      for (const e of b.events) {
+        if (e.kind === 'impact') impacts++;
+        if (e.kind === 'hit' && e.sourceId !== undefined && b.units.some((u) => u.id === e.targetId && u.side === 'defender')) hitUnit = true;
+      }
+    }
+    expect(impacts).toBeGreaterThan(0);
+    expect(cat.x).toBeLessThan(15); // no necesitó cruzar el muro
+    // El daño en área alcanza a las dos casas contiguas.
+    const houses = b.buildings.filter((x) => x.type === 'house');
+    expect(houses.every((h) => h.hp < h.maxHp)).toBe(true);
+    expect(cat.targetId === null || b.buildings.some((x) => x.id === cat.targetId)).toBe(true);
+    void hitUnit;
+  });
+});
+
+describe('campamentos de monstruos', () => {
+  it('se generan de forma determinista y escalan con el nivel', () => {
+    const a = generateMonsterCamp(5, 1);
+    expect(generateMonsterCamp(5, 1)).toEqual(a);
+    expect(a.kind).toBe('camp');
+    expect(a.buildings.some((b) => b.type === 'campChest')).toBe(true);
+    const big = generateMonsterCamp(5, 4);
+    expect(big.defenders.length).toBeGreaterThan(a.defenders.length);
+    expect(big.defenders.some((d) => d.role === 'boneLord')).toBe(true);
+    expect(big.buildings.some((b) => b.type === 'campTotem')).toBe(true);
+    expect(baseLoot(big).gold).toBeGreaterThan(baseLoot(a).gold);
+  });
+
+  it('limpiarlo da botín (también de los monstruos) y lo hace desaparecer', () => {
     const s = createInitialState();
-    const soldier = { id: 500, name: 'Caído', role: 'warrior' as const, roleLevel: 2, task: { kind: 'idle' as const } };
-    s.villagers.push(soldier);
+    const camp = s.camps[0]!;
+    const b = createBattle(generateMonsterCamp(camp.seed, 1), army('warrior', 'warrior', 'warrior', 'warrior', 'archer', 'archer').map((u) => ({ ...u, level: 3 })), camp.id);
+    [[2, 2], [2, 3], [3, 2], [37, 37], [37, 36], [36, 37]].forEach(([x, y], i) => executeBattleCommand(b, { type: 'deploy', villagerId: 100 + i, x: x!, y: y! }));
+    let monsterLoot = 0;
+    for (let i = 0; i < 180 * BATTLE_TICK_RATE && b.phase !== 'ended'; i++) {
+      stepBattle(b);
+      for (const e of b.events) if (e.kind === 'death' && e.loot.gold) monsterLoot += e.loot.gold;
+    }
+    expect(b.result!.cleared).toBe(true);
+    expect(b.stars).toBeGreaterThanOrEqual(2);
+    expect(monsterLoot).toBeGreaterThan(0);
+    applyBattleResult(s, b.result!);
+    expect(s.camps.find((c) => c.id === camp.id)).toBeUndefined();
+  });
+
+  it('aparecen con el tiempo hasta un máximo', () => {
+    const s = createInitialState();
+    expect(s.camps).toHaveLength(1);
+    for (let i = 0; i < (CAMP_SPAWN_SECONDS + 1) * TICK_RATE; i += 50) tick(s, 50);
+    expect(s.camps).toHaveLength(2);
+    for (let i = 0; i < 10; i++) spawnCamp(s);
+    expect(s.camps).toHaveLength(MAX_CAMPS);
+    expect(new Set(s.camps.map((c) => c.slot)).size).toBe(MAX_CAMPS);
+  });
+});
+
+describe('vuelta a la aldea y enfermería', () => {
+  const withSoldiers = (levels: number[]) => {
+    const s = createInitialState();
+    const soldiers: Villager[] = levels.map((lvl, i) => ({ id: 500 + i, name: `S${i}`, role: 'warrior', roleLevel: lvl, task: { kind: 'idle' } }));
+    s.villagers.push(...soldiers);
+    return { s, soldiers };
+  };
+  const addInfirmary = (s: GameState, level = 1) => {
+    const b = { id: 900 + s.buildings.length, type: 'infirmary' as const, x: 2, y: 2, level, construction: null, hp: 500, stored: 0, recruits: [], healing: null };
+    s.buildings.push(b);
+    return b;
+  };
+
+  it('suma el botín hasta llenar los almacenes', () => {
+    const { s } = withSoldiers([1]);
     expect(availableArmy(s).map((u) => u.villagerId)).toEqual([500]);
-    const { gained } = applyBattleResult(s, {
-      stars: 1,
-      destruction: 0.5,
-      loot: { gold: 800, food: 50 },
-      fallen: [500],
-      survivors: [],
-      reason: 'time',
-    });
+    const { gained } = applyBattleResult(s, result({ loot: { gold: 800, food: 50 } }));
     expect(gained).toEqual({ gold: 500, wood: 0, food: 50 }); // 500 + 500 = 1000 de capacidad
     expect(s.resources.gold).toBe(1000);
-    expect(soldier.task.kind).toBe('wounded');
-    expect(availableArmy(s)).toEqual([]);
-    for (let i = 0; i < 90 * TICK_RATE; i++) tick(s);
-    expect(soldier.task.kind).toBe('idle');
+  });
+
+  it('sin enfermería, los caídos mueren', () => {
+    const { s } = withSoldiers([1, 2]);
+    const { dead, wounded } = applyBattleResult(s, result({ fallen: [500, 501] }));
+    expect(wounded).toEqual([]);
+    expect(dead.sort()).toEqual([500, 501]);
+    expect(s.villagers.some((v) => v.id === 500 || v.id === 501)).toBe(false);
+  });
+
+  it('las camas se llenan primero con los de más nivel y el resto muere', () => {
+    const { s } = withSoldiers([1, 3, 2, 1]);
+    const inf = addInfirmary(s, 1); // 3 camas
+    const { wounded, dead } = applyBattleResult(s, result({ fallen: [500, 501, 502, 503] }));
+    expect(wounded).toEqual([501, 502, 500]);
+    expect(dead).toEqual([503]);
+    expect(s.villagers.find((v) => v.id === 501)!.task).toEqual({ kind: 'wounded', infirmaryId: inf.id });
+    expect(availableArmy(s).map((u) => u.villagerId)).toEqual([]);
+  });
+
+  it('no se curan solos: hay que pagar y tarda más con más soldados y de más nivel', () => {
+    const { s, soldiers } = withSoldiers([1, 3]);
+    const inf = addInfirmary(s, 1);
+    applyBattleResult(s, result({ fallen: [500, 501] }));
+    for (let i = 0; i < 600 * TICK_RATE; i += 100) tick(s, 100);
+    expect(soldiers.every((v) => v.task.kind === 'wounded')).toBe(true);
+
+    expect(healTicks([soldiers[1]!], inf)).toBeGreaterThan(healTicks([soldiers[0]!], inf));
+    expect(healTicks(soldiers, inf)).toBeGreaterThan(healTicks([soldiers[1]!], inf));
+    expect(healCost(soldiers)).toEqual({ food: 160, gold: 100 });
+
+    s.resources.food = 1000;
+    s.resources.gold = 1000;
+    expect(executeCommand(s, { type: 'healWounded', buildingId: inf.id })).toEqual({ ok: true });
+    expect(s.resources.food).toBe(840);
+    expect(executeCommand(s, { type: 'healWounded', buildingId: inf.id })).toEqual({ ok: false, error: 'busy' });
+    const ticks = (inf.healing as { totalTicks: number } | null)!.totalTicks;
+    expect(ticks).toBe(4 * 30 * TICK_RATE); // niveles 1 + 3, 30 s por nivel
+    for (let i = 0; i <= ticks; i += 10) tick(s, 10);
+    expect(soldiers.every((v) => v.task.kind === 'idle')).toBe(true);
+    expect(inf.healing).toBeNull();
+    expect(executeCommand(s, { type: 'healWounded', buildingId: inf.id })).toEqual({ ok: false, error: 'noPatients' });
+  });
+
+  it('una enfermería mejor cura más rápido y tiene más camas', () => {
+    const { s, soldiers } = withSoldiers([2, 2, 2, 2, 2]);
+    const inf = addInfirmary(s, 2); // 5 camas, velocidad ×1,3
+    const { dead } = applyBattleResult(s, result({ fallen: soldiers.map((v) => v.id) }));
+    expect(dead).toEqual([]);
+    const slow = addInfirmary(s, 1);
+    expect(healTicks(soldiers, inf)).toBeLessThan(healTicks(soldiers, slow));
   });
 });

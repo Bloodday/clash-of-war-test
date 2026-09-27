@@ -413,7 +413,9 @@ describe('guardado', () => {
       },
     };
     const loaded = deserialize(JSON.stringify(v1), 0)!;
-    expect(loaded.state.version).toBe(3);
+    expect(loaded.state.version).toBe(4);
+    expect(loaded.state.camps).toHaveLength(1);
+    expect(loaded.state.buildings[0]!.healing).toBeNull();
     expect(loaded.state.buildings[0]!.hp).toBe(550);
     expect(loaded.state.buildings[0]!.stored).toBe(0);
     expect(loaded.state.buildings[0]!.recruits).toEqual([]);
@@ -444,6 +446,25 @@ describe('guardado', () => {
       ['builder', 1],
       ['archer', 2],
     ]);
+  });
+
+  it('migra partidas de la versión 3: los heridos antiguos quedan curados', () => {
+    const v3 = {
+      savedAt: 0,
+      state: {
+        version: 3,
+        tick: 5,
+        rng: 1,
+        nextId: 4,
+        resources: { gold: 10, wood: 20, food: 30 },
+        buildings: [{ id: 1, type: 'farm', x: 0, y: 0, level: 1, construction: null, hp: 400, stored: 7, recruits: [] }],
+        villagers: [{ id: 2, name: 'Aldo', role: 'warrior', roleLevel: 1, task: { kind: 'wounded', remainingTicks: 50, totalTicks: 90 } }],
+      },
+    };
+    const loaded = deserialize(JSON.stringify(v3), 0)!;
+    expect(loaded.state.version).toBe(4);
+    expect(loaded.state.villagers[0]!.task).toEqual({ kind: 'idle' });
+    expect(loaded.state.camps).toHaveLength(1);
   });
 
   it('ignora datos corruptos o de versiones desconocidas', () => {

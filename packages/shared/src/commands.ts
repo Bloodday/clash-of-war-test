@@ -7,6 +7,9 @@ import {
   getHousing,
   getIdleBuilders,
   getIncomingRecruits,
+  healCost,
+  healTicks,
+  waitingPatients,
   getTownHallLevel,
   getTrainees,
   getVillager,
@@ -31,7 +34,8 @@ export type Command =
   | { type: 'upgradeBuilding'; buildingId: number }
   | { type: 'collect'; buildingId: number }
   | { type: 'trainVillager'; villagerId: number; buildingId: number }
-  | { type: 'recruitVillager'; buildingId: number };
+  | { type: 'recruitVillager'; buildingId: number }
+  | { type: 'healWounded'; buildingId: number };
 
 export type CommandError =
   | 'invalidCommand'
@@ -53,7 +57,9 @@ export type CommandError =
   | 'buildingLevelTooLow'
   | 'noHousing'
   | 'notInn'
-  | 'roleLocked';
+  | 'roleLocked'
+  | 'noPatients'
+  | 'notInfirmary';
 
 export type CommandResult = { ok: true } | { ok: false; error: CommandError };
 
@@ -105,6 +111,7 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
         hp: first.hp,
         stored: 0,
         recruits: [],
+        healing: null,
       };
       state.buildings.push(b);
       pay(state, first.cost);
@@ -186,6 +193,21 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       pay(state, RECRUIT_COST);
       const ticks = secondsToTicks(level.recruitSeconds);
       b.recruits.push({ remainingTicks: ticks, totalTicks: ticks });
+      return OK;
+    }
+
+    case 'healWounded': {
+      const b = getBuilding(state, cmd.buildingId);
+      if (!b) return fail('unknownBuilding');
+      if (b.type !== 'infirmary') return fail('notInfirmary');
+      if (!isOperational(b) || b.healing) return fail('busy');
+      const patients = waitingPatients(state, b);
+      if (patients.length === 0) return fail('noPatients');
+      const cost = healCost(patients);
+      if (!canAfford(state, cost)) return fail('cannotAfford');
+      pay(state, cost);
+      const ticks = healTicks(patients, b);
+      b.healing = { remainingTicks: ticks, totalTicks: ticks, patientIds: patients.map((v) => v.id) };
       return OK;
     }
 

@@ -1,14 +1,16 @@
-import { REPAIR_MIN_HP_PER_SECOND, REPAIR_RATE, TICK_RATE } from './data';
+import { CAMP_SLOTS, CAMP_SPAWN_SECONDS, MAX_CAMPS, REPAIR_MIN_HP_PER_SECOND, REPAIR_RATE, TICK_RATE } from './data';
 import {
   currentLevelDef,
   getIdleBuilders,
+  getTownHallLevel,
   isDamaged,
   isOperational,
   producedResource,
   producerCapacity,
   workSpeed,
 } from './queries';
-import { createVillager, maxHp, type GameState } from './state';
+import { allocId, createVillager, maxHp, type GameState } from './state';
+import { nextRandom } from './rng';
 
 /**
  * Avanza la simulación `dt` ticks. Con dt=1 es el paso normal del bucle de
@@ -63,12 +65,22 @@ export function tick(state: GameState, dt = 1): void {
     for (let i = 0; i < arrived; i++) createVillager(state);
   }
 
-  // 5) Heridos de batalla que se recuperan.
-  for (const v of state.villagers) {
-    const t = v.task;
-    if (t.kind !== 'wounded') continue;
-    t.remainingTicks -= dt;
-    if (t.remainingTicks <= 0) v.task = { kind: 'idle' };
+  // 5) Curaciones en las enfermerías (solo si el jugador las pagó).
+  for (const b of state.buildings) {
+    const job = b.healing;
+    if (!job || !isOperational(b)) continue;
+    job.remainingTicks -= dt;
+    if (job.remainingTicks > 0) continue;
+    for (const v of state.villagers) {
+      if (job.patientIds.includes(v.id) && v.task.kind === 'wounded') v.task = { kind: 'idle' };
+    }
+    b.healing = null;
+  }
+
+  // Aparecen campamentos de monstruos en los claros libres del bosque.
+  if (state.tick + dt >= state.nextCampTick) {
+    state.nextCampTick = state.tick + dt + CAMP_SPAWN_SECONDS * TICK_RATE;
+    spawnCamp(state);
   }
 
   // 6) Entrenamiento.
@@ -117,4 +129,16 @@ export function advance(state: GameState, ticks: number, chunk = TICK_RATE * 5):
     tick(state, step);
     remaining -= step;
   }
+}
+
+/** Nuevo campamento de monstruos (si queda algún claro libre), de un nivel parecido al de la aldea. */
+export function spawnCamp(state: GameState): void {
+  if (state.camps.length >= MAX_CAMPS) return;
+  const used = new Set(state.camps.map((c) => c.slot));
+  const free = CAMP_SLOTS.map((_, i) => i).filter((i) => !used.has(i));
+  if (free.length === 0) return;
+  const slot = free[Math.floor(nextRandom(state) * free.length)]!;
+  const th = Math.max(1, getTownHallLevel(state));
+  const level = Math.max(1, Math.min(5, th + Math.floor(nextRandom(state) * 3) - 1));
+  state.camps.push({ id: allocId(state), seed: Math.floor(nextRandom(state) * 2 ** 31), level, slot });
 }
