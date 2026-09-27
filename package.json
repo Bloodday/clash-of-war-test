@@ -1,0 +1,17 @@
+{
+  "name": "clash-of-war",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm --filter @cow/client dev",
+    "build": "pnpm --filter @cow/client build",
+    "preview": "pnpm --filter @cow/client preview",
+    "test": "pnpm --filter @cow/shared test",
+    "typecheck": "tsc -p packages/shared && tsc -p packages/client"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  },
+  "packageManager": "pnpm@10.33.0"
+}
