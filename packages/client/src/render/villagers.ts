@@ -29,8 +29,11 @@ function lookFor(v: Villager): Look {
       return { character: 'Rogue_Hooded', show: ['2H_Crossbow', ...(l >= 2 ? ['Rogue_Cape'] : []), ...(l >= 3 ? ['Knife_Offhand'] : [])] };
     case 'healer':
       return { character: 'Mage', show: ['2H_Staff', ...(l >= 2 ? ['Mage_Hat'] : []), ...(l >= 3 ? ['Mage_Cape'] : [])] };
+    case 'builder':
+      return { character: 'Barbarian', show: [...(l >= 2 ? ['Barbarian_Hat'] : []), ...(l >= 3 ? ['Barbarian_Cape'] : [])] };
     default:
-      return { character: 'Barbarian', show: [] };
+      // Aldeano sin formar: ropa sencilla, sin armas.
+      return { character: 'Rogue', show: [] };
   }
 }
 
@@ -60,6 +63,9 @@ export class VillagerAgents {
   readonly group = new THREE.Group();
   private agents = new Map<number, Agent>();
   private tmp = new THREE.Vector3();
+
+  /** Se llama cuando llega un aldeano nuevo (para anunciarlo). */
+  onArrive: (v: Villager, at: THREE.Vector3) => void = () => {};
 
   constructor(
     private assets: Assets,
@@ -91,9 +97,10 @@ export class VillagerAgents {
 
   private spawn(state: GameState, v: Villager): Agent {
     const root = new THREE.Group();
-    const th = state.buildings.find((b) => b.type === 'townHall');
-    const start = th ? centerOf(th) : new THREE.Vector3();
-    if (th) start.z += BUILDING_DEFS.townHall.size / 2 + 0.4;
+    // Los recién llegados salen por la puerta de la posada.
+    const door = state.buildings.find((b) => b.type === 'inn') ?? state.buildings.find((b) => b.type === 'townHall');
+    const start = door ? centerOf(door) : new THREE.Vector3();
+    if (door) start.z += BUILDING_DEFS[door.type].size / 2 + 0.4;
     root.position.copy(start);
     const agent: Agent = {
       root,
@@ -114,7 +121,10 @@ export class VillagerAgents {
     };
     this.group.add(root);
     this.agents.set(v.id, agent);
-    if (state.tick > 0) this.particles.dust(start.clone().setY(0.1), 0.3, 10);
+    if (state.tick > 0 && this.agents.size > 0) {
+      this.particles.dust(start.clone().setY(0.1), 0.3, 10);
+      this.onArrive(v, start);
+    }
     return agent;
   }
 
@@ -183,10 +193,14 @@ export class VillagerAgents {
     if (t.kind === 'repair') return { key: `r${t.buildingId}`, building: byId(t.buildingId), activity: 'repair' };
     if (t.kind === 'build') return { key: `b${t.buildingId}`, building: byId(t.buildingId), activity: 'build' };
     if (t.kind === 'train') return { key: `t${t.buildingId}`, building: byId(t.buildingId), activity: 'train' };
-    // Soldados: de guardia junto a su edificio. Civiles libres: pasean de un edificio a otro.
-    const home = v.role
-      ? state.buildings.find((b) => b.type === ROLE_DEFS[v.role!].trainedAt)
-      : state.buildings[(v.id * 7 + Math.floor(state.tick / (TICK_RATE * 12)) * 3) % state.buildings.length];
+    // Soldados: de guardia junto a su edificio. Sin formar: esperan en la posada.
+    // Albañiles libres: pasean de un edificio a otro buscando trabajo.
+    const home =
+      v.role === 'builder'
+        ? state.buildings[(v.id * 7 + Math.floor(state.tick / (TICK_RATE * 12)) * 3) % state.buildings.length]
+        : v.role
+          ? state.buildings.find((b) => b.type === ROLE_DEFS[v.role!].trainedAt)
+          : state.buildings.find((b) => b.type === 'inn');
     return { key: `i${home?.id}`, building: home ?? state.buildings.find((b) => b.type === 'townHall'), activity: 'idle' };
   }
 
@@ -250,7 +264,7 @@ export class VillagerAgents {
     };
 
     if (activity === 'idle') {
-      show('Mug', !v.role);
+      show('Mug', v.role === 'builder');
       // Tras un rato, paseo corto o celebración.
       const cycle = ['Idle', 'Idle', v.role ? 'Cheer' : 'Sit_Floor_Idle'];
       const clip = cycle[agent.loopIndex % cycle.length]!;
@@ -288,6 +302,7 @@ export class VillagerAgents {
     // Entrenamiento según el rol que se aprende.
     const role: RoleId | undefined = v.task.kind === 'train' ? v.task.role : undefined;
     const drills: Record<RoleId, string[]> = {
+      builder: ['1H_Melee_Attack_Chop', 'Interact', 'PickUp'],
       warrior: ['1H_Melee_Attack_Slice_Diagonal', '1H_Melee_Attack_Chop', 'Block', '1H_Melee_Attack_Stab'],
       archer: ['2H_Ranged_Aiming', '2H_Ranged_Shoot', '2H_Ranged_Reload'],
       healer: ['Spellcasting', 'Spellcast_Shoot', 'Spellcast_Long'],
@@ -298,10 +313,11 @@ export class VillagerAgents {
       agent.loopClock = 0;
       agent.loopIndex++;
     }
+    if (role === 'builder') show('1H_Axe', true);
     if (role === 'healer') this.particles.magic(hand.setY(0.55), '#8fe3ff');
-    else if (role === 'warrior' && agent.fxClock > 1.2) {
+    else if ((role === 'warrior' || role === 'builder') && agent.fxClock > 1.2) {
       agent.fxClock = 0;
-      this.particles.sparks(hand, 4, '#e8f4ff');
+      this.particles.sparks(hand, 4, role === 'builder' ? '#ffcf5a' : '#e8f4ff');
     }
   }
 }

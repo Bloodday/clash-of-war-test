@@ -1025,3 +1025,8 @@ small.warn {
   color: #ffcf5a;
   font-weight: 700;
 }
+
+.stat.waiting b {
+  color: #ffd764;
+  animation: pulse 1.2s ease-in-out infinite;
+}

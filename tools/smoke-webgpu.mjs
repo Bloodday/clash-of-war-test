@@ -54,7 +54,7 @@ try {
   if (backend !== 'WebGPU' && !ALLOW_WEBGL) fail('se esperaba WebGPU');
 
   await page.evaluate(() => (window.world.intro.t = 99));
-  const placed = await page.evaluate(() => window.game.dispatch({ type: 'placeBuilding', building: 'lumberCamp', x: 26, y: 20 }));
+  const placed = await page.evaluate(() => window.game.dispatch({ type: 'placeBuilding', building: 'lumberCamp', x: 27, y: 23 }));
   if (!placed.ok) fail(`no se pudo construir: ${placed.error}`);
   await page.evaluate(() => (window.game.speed = 20));
   await page.waitForFunction(() => window.game.state.buildings.some((b) => b.type === 'lumberCamp' && b.level === 1), null, {
@@ -69,6 +69,33 @@ try {
   });
   if (!(food > 0)) fail('la recolección no sumó comida');
   console.log(`· recolectado: +${Math.floor(food)} de comida`);
+
+  // Reclutar en la posada y formar al recién llegado como albañil en un taller.
+  const before = await page.evaluate(() => {
+    const s = window.game.state;
+    s.resources.food = 1000;
+    s.resources.gold = 1000;
+    s.resources.wood = 1000;
+    const inn = s.buildings.find((b) => b.type === 'inn');
+    const r = window.game.dispatch({ type: 'recruitVillager', buildingId: inn.id });
+    const w = window.game.dispatch({ type: 'placeBuilding', building: 'workshop', x: 12, y: 24 });
+    if (!r.ok || !w.ok) throw new Error(`posada/taller: ${JSON.stringify([r, w])}`);
+    return s.villagers.length;
+  });
+  await page.waitForFunction(
+    (n) => window.game.state.villagers.length > n && window.game.state.buildings.some((b) => b.type === 'workshop' && b.level === 1),
+    before,
+    { timeout: 120_000 },
+  );
+  await page.evaluate(() => {
+    const s = window.game.state;
+    const v = s.villagers.find((x) => x.role === null && x.task.kind === 'idle');
+    const ws = s.buildings.find((b) => b.type === 'workshop');
+    const r = window.game.dispatch({ type: 'trainVillager', villagerId: v.id, buildingId: ws.id });
+    if (!r.ok) throw new Error(`entrenar albañil: ${r.error}`);
+  });
+  await page.waitForFunction(() => window.game.state.villagers.filter((v) => v.role === 'builder').length >= 3, null, { timeout: 120_000 });
+  console.log('· posada: aldeano reclutado y formado como albañil');
 
   // Vida completa de cada edificio antes del ataque, para comprobar que se repara todo.
   await page.evaluate(() => {

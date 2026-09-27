@@ -47,11 +47,39 @@ const SPECS: Record<Exclude<BuildingType, 'wall' | 'farm'>, Spec> = {
     ] as [string, number, number, number][],
   },
   house: {
-    models: ['building_home_A_blue', 'building_home_B_blue', 'building_tavern_blue'],
+    models: ['building_home_A_blue', 'building_home_B_blue', 'building_home_B_blue'],
     fill: 0.9,
     pad: PAD_GRASS,
-    props: (l) => (l >= 2 ? [['barrel', 0.4, 0.4, 0.2]] : []),
+    props: (l) =>
+      [
+        ...(l >= 2 ? ([['barrel', 0.4, 0.4, 0.2]] as const) : []),
+        ...(l >= 3 ? ([['crate_A_small', -0.42, 0.42, 0.16], ['flag_blue', 0.44, -0.44, 0.06]] as const) : []),
+      ] as [string, number, number, number][],
     chimney: [0.2, 0.95, -0.1],
+  },
+  inn: {
+    models: ['building_tavern_blue'],
+    fill: 0.8,
+    pad: PAD_DIRT,
+    props: (l) => [
+      ['barrel', 0.42, 0.42, 0.13],
+      ['barrel', 0.3, 0.46, 0.11],
+      ...(l >= 2 ? ([['building_well_blue', -0.38, 0.38, 0.22]] as const) : []),
+      ...(l >= 3 ? ([['tent', 0.38, -0.38, 0.22], ['flag_blue', -0.45, -0.45, 0.05]] as const) : []),
+    ] as [string, number, number, number, number?][],
+    chimney: [0.15, 0.95, -0.15],
+  },
+  workshop: {
+    models: ['building_blacksmith_blue'],
+    fill: 0.8,
+    pad: PAD_DIRT,
+    props: (l) => [
+      ['resource_lumber', 0.36, 0.42, 0.26, 0.2],
+      ['resource_stone', -0.4, 0.42, 0.18],
+      ...(l >= 2 ? ([['ladder', 0.46, -0.2, 0.08]] as const) : []),
+      ...(l >= 3 ? ([['wheelbarrow', -0.4, -0.38, 0.18, 0.8]] as const) : []),
+    ] as [string, number, number, number, number?][],
+    chimney: [0.28, 0.9, -0.25],
   },
   lumberCamp: {
     models: ['building_lumbermill_blue'],
@@ -466,7 +494,7 @@ const ghostOk = new THREE.MeshStandardMaterial({ color: '#5fe07a', transparent: 
 const ghostBad = new THREE.MeshStandardMaterial({ color: '#ff4a3d', transparent: true, opacity: 0.5, depthWrite: false, emissive: new THREE.Color('#7a1f1a') });
 
 export function createGhost(assets: Assets, type: BuildingType): THREE.Group {
-  const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null, hp: 1, stored: 0 };
+  const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null, hp: 1, stored: 0, recruits: [] };
   const g = createBuildingVisual(assets, fake).root;
   const size = BUILDING_DEFS[type].size;
   const base = new THREE.Mesh(cached(`ghost:${size}`, () => new THREE.BoxGeometry(size, 0.04, size)), ghostOk);

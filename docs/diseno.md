@@ -8,11 +8,20 @@ Constructor de aldeas asíncrono (estilo Clash of Clans) cuyo ejército está fo
 
 ### 1. Aldeanos y roles
 
-- Todo habitante es un aldeano. Los aldeanos se reclutan en el ayuntamiento (cuesta comida) y necesitan alojamiento (ayuntamiento + casas).
-- Los aldeanos **civiles son los constructores** de la aldea: cada obra (nueva o mejora) ocupa a uno mientras dura, y **reparan solos** los edificios dañados (uno por edificio, primero los más dañados). El contador 🔨 de la barra superior muestra los constructores libres.
-- Un edificio de entrenamiento enseña un rol: **Cuartel → Guerrero**, **Campo de tiro → Arquero**, **Templo → Sanador**. El nivel del edificio limita el nivel máximo del rol que puede enseñar.
-- Un aldeano con rol es un **soldado**: ya no construye ni repara. Esta es la tensión central: cada soldado es un constructor menos.
-- Reentrenar a un soldado en otro rol lo reinicia a nivel 1.
+- Todo habitante es un aldeano. Los nuevos llegan a la **Posada**: se reclutan con comida y tardan un rato en llegar (más nivel = más plazas a la vez y menos espera). Necesitan alojamiento (ayuntamiento + casas), y los que vienen en camino ya lo ocupan.
+- Un aldeano recién llegado está **sin formar** y no hace nada útil: hay que mandarlo a un edificio de formación.
+- Cada rol se aprende en su edificio y el nivel del edificio limita el nivel del rol:
+
+  | Edificio | Rol | Para qué sirve |
+  | --- | --- | --- |
+  | Taller | Albañil | Los **únicos** que construyen, mejoran y reparan. Más nivel = trabajan más rápido (×1 / ×1,35 / ×1,75). |
+  | Cuartel | Guerrero | Cuerpo a cuerpo. |
+  | Campo de tiro | Arquero | A distancia. |
+  | Templo | Sanador | Cura a los aliados. |
+
+- La decisión estratégica: cuántos aldeanos formas como albañiles (economía) y cuántos como soldados (ejército). Reentrenar a alguien en otro rol lo reinicia a nivel 1.
+- Cada obra ocupa a un albañil (se elige al de más nivel). Los albañiles libres reparan solos los edificios dañados. En la barra superior: 🔨 albañiles libres / total y 🧑 aldeanos sin formar.
+- Aspecto: sin formar = pícaro sencillo; albañil = bárbaro con hacha (gorro y capa con el nivel); guerrero = caballero; arquero = pícaro encapuchado; sanador = mago.
 
 ### 2. Economía (como en Clash of Clans)
 
@@ -26,7 +35,7 @@ Constructor de aldeas asíncrono (estilo Clash of Clans) cuyo ejército está fo
 ### 2b. Daño y reparación
 
 - Cada edificio tiene vida. A 0 queda **destruido** (escombros) y deja de funcionar.
-- Los aldeanos civiles libres acuden solos a repararlo (≈5 % de la vida por segundo). Un edificio dañado no se puede mejorar.
+- Los albañiles libres acuden solos a repararlo (≈5 % de la vida por segundo, más rápido con más nivel). Un edificio dañado no se puede mejorar.
 - Las batallas (fase 2) usarán `applyDamage` de la simulación; mientras tanto, el botón **💥 Simular ataque** daña edificios al azar para probarlo.
 
 ### 3. Batallas (fases 2 y 3)

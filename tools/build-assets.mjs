@@ -48,7 +48,7 @@ const PROPS = [
   'tent', 'weaponrack', 'wheelbarrow',
 ];
 
-const CHARACTERS = ['Knight', 'Barbarian', 'Mage', 'Rogue_Hooded'];
+const CHARACTERS = ['Knight', 'Barbarian', 'Mage', 'Rogue_Hooded', 'Rogue'];
 // Clips que usamos ahora (aldea) y los que necesitarán las fases de batalla.
 const CLIPS = [
   'Idle', 'Unarmed_Idle', 'Walking_A', 'Walking_B', 'Running_A', 'Interact', 'Use_Item', 'PickUp', 'Cheer',

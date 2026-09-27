@@ -5,7 +5,8 @@ import {
   currentLevelDef,
   getBuilding,
   getHousing,
-  getIdleCivilians,
+  getIdleBuilders,
+  getIncomingRecruits,
   getTownHallLevel,
   getTrainees,
   getVillager,
@@ -18,7 +19,7 @@ import {
   nextRoleLevel,
   roleMaxLevel,
 } from './queries';
-import { allocId, createVillager, maxHp, type Building, type GameState } from './state';
+import { allocId, maxHp, type Building, type GameState } from './state';
 
 // Toda modificación del estado pasa por un comando. Son objetos planos y
 // serializables: hoy los ejecuta el cliente, mañana se enviarán al servidor
@@ -30,7 +31,7 @@ export type Command =
   | { type: 'upgradeBuilding'; buildingId: number }
   | { type: 'collect'; buildingId: number }
   | { type: 'trainVillager'; villagerId: number; buildingId: number }
-  | { type: 'recruitVillager' };
+  | { type: 'recruitVillager'; buildingId: number };
 
 export type CommandError =
   | 'invalidCommand'
@@ -50,7 +51,8 @@ export type CommandError =
   | 'storageFull'
   | 'notTrainingBuilding'
   | 'buildingLevelTooLow'
-  | 'noHousing';
+  | 'noHousing'
+  | 'notInn';
 
 export type CommandResult = { ok: true } | { ok: false; error: CommandError };
 
@@ -72,7 +74,7 @@ function startConstruction(state: GameState, b: Building, targetLevel: number): 
     b.hp = maxHp(b);
     return OK;
   }
-  const builder = getIdleCivilians(state)[0];
+  const builder = getIdleBuilders(state)[0];
   if (!builder) return fail('noIdleBuilder');
   builder.task = { kind: 'build', buildingId: b.id };
   b.construction = { targetLevel, remainingTicks: ticks, totalTicks: ticks, builderId: builder.id };
@@ -90,7 +92,7 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       if (getTownHallLevel(state) < first.requiresTownHall) return fail('townHallTooLow');
       if (!canAfford(state, first.cost)) return fail('cannotAfford');
       if (!isAreaFree(state, cmd.x, cmd.y, def.size)) return fail('areaBlocked');
-      if (first.buildSeconds > 0 && getIdleCivilians(state).length === 0) return fail('noIdleBuilder');
+      if (first.buildSeconds > 0 && getIdleBuilders(state).length === 0) return fail('noIdleBuilder');
 
       const b: Building = {
         id: allocId(state),
@@ -101,6 +103,7 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
         construction: null,
         hp: first.hp,
         stored: 0,
+        recruits: [],
       };
       state.buildings.push(b);
       pay(state, first.cost);
@@ -127,7 +130,7 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       // El ayuntamiento se limita a sí mismo por su nivel actual (requiresTownHall = nivel - 1).
       if (getTownHallLevel(state) < next.requiresTownHall) return fail('townHallTooLow');
       if (!canAfford(state, next.cost)) return fail('cannotAfford');
-      if (next.buildSeconds > 0 && getIdleCivilians(state).length === 0) return fail('noIdleBuilder');
+      if (next.buildSeconds > 0 && getIdleBuilders(state).length === 0) return fail('noIdleBuilder');
       pay(state, next.cost);
       return startConstruction(state, b, b.level + 1);
     }
@@ -169,10 +172,17 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
     }
 
     case 'recruitVillager': {
-      if (state.villagers.length >= getHousing(state)) return fail('noHousing');
+      const b = getBuilding(state, cmd.buildingId);
+      if (!b) return fail('unknownBuilding');
+      const level = currentLevelDef(b);
+      if (!level?.recruitSlots || !level.recruitSeconds) return fail('notInn');
+      if (!isOperational(b)) return fail('busy');
+      if (b.recruits.length >= level.recruitSlots) return fail('noFreeSlot');
+      if (state.villagers.length + getIncomingRecruits(state) >= getHousing(state)) return fail('noHousing');
       if (!canAfford(state, RECRUIT_COST)) return fail('cannotAfford');
       pay(state, RECRUIT_COST);
-      createVillager(state);
+      const ticks = secondsToTicks(level.recruitSeconds);
+      b.recruits.push({ remainingTicks: ticks, totalTicks: ticks });
       return OK;
     }
 

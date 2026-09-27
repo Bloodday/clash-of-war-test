@@ -24,7 +24,7 @@ export const ERROR_MESSAGES: Record<CommandError, string> = {
   townHallTooLow: 'Necesitas mejorar el ayuntamiento.',
   cannotAfford: 'No tienes recursos suficientes.',
   areaBlocked: 'No se puede colocar ahí.',
-  noIdleBuilder: 'No hay aldeanos libres para construir.',
+  noIdleBuilder: 'No hay albañiles libres. Forma aldeanos como albañiles en el Taller.',
   busy: 'Está ocupado ahora mismo.',
   maxLevel: 'Ya está al nivel máximo.',
   noFreeSlot: 'No quedan huecos libres.',
@@ -35,6 +35,7 @@ export const ERROR_MESSAGES: Record<CommandError, string> = {
   notTrainingBuilding: 'Este edificio no entrena roles.',
   buildingLevelTooLow: 'Mejora el edificio para entrenar el siguiente nivel.',
   noHousing: 'Construye o mejora casas para alojar a más aldeanos.',
+  notInn: 'Los aldeanos se reclutan en la posada.',
 };
 
 const FEMININE = new Set<BuildingType>(['house', 'farm', 'goldMine', 'archerTower']);
@@ -62,7 +63,7 @@ export function costEntries(cost: Cost): [ResourceId, number][] {
 }
 
 export function roleLabel(v: Villager): string {
-  return v.role ? `${ROLE_DEFS[v.role].name} ${v.roleLevel}` : 'Civil';
+  return v.role ? `${ROLE_DEFS[v.role].name} ${v.roleLevel}` : 'Sin formar';
 }
 
 export function taskLabel(state: GameState, v: Villager): string {
@@ -73,7 +74,7 @@ export function taskLabel(state: GameState, v: Villager): string {
   };
   switch (t.kind) {
     case 'idle':
-      return v.role ? 'En guardia' : 'Libre';
+      return !v.role ? 'Esperando formación' : v.role === 'builder' ? 'Libre' : 'En guardia';
     case 'repair':
       return `Reparando · ${bName(t.buildingId)}`;
     case 'build':

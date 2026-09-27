@@ -9,6 +9,7 @@ import {
   currentLevelDef,
   getBuildingProduction,
   getHousing,
+  getIncomingRecruits,
   getRepairers,
   getTownHallLevel,
   getTrainees,
@@ -82,19 +83,9 @@ export function BuildingPanel({ game, ui, building: b }: Props) {
 
       {def.trainsRole && b.level > 0 && <Training state={state} building={b} run={run} />}
 
-      {b.type === 'townHall' && (
-        <section>
-          <h3>Aldeanos</h3>
-          <div class="row">
-            <span>
-              {state.villagers.length} / {getHousing(state)} alojados
-            </span>
-            <button onClick={() => run({ type: 'recruitVillager' }, 'Ha llegado un nuevo aldeano')}>
-              Reclutar <CostView cost={RECRUIT_COST} state={state} />
-            </button>
-          </div>
-        </section>
-      )}
+      {b.type === 'townHall' && <Population state={state} />}
+
+      {cur?.recruitSlots && <Recruiting state={state} building={b} run={run} />}
 
       <section class="actions">
         {b.level === 0 ? null : next ? (
@@ -189,6 +180,66 @@ function Production({ ui, building: b }: { ui: UiStore; building: Building }) {
 }
 
 type Run = (cmd: Command, okMsg?: string) => void;
+
+function Population({ state }: { state: GameState }) {
+  const count = (pred: (v: Villager) => boolean) => state.villagers.filter(pred).length;
+  const rows: [string, number][] = [
+    ['🧑 Sin formar', count((v) => v.role === null)],
+    ['🔨 Albañiles', count((v) => v.role === 'builder')],
+    ...(['warrior', 'archer', 'healer'] as const).map((r): [string, number] => [`⚔️ ${ROLE_DEFS[r].name}s`, count((v) => v.role === r)]),
+  ];
+  return (
+    <section>
+      <h3>Población</h3>
+      <dl class="stats">
+        {rows.map(([k, n]) => (
+          <Fragment key={k}>
+            <dt>{k}</dt>
+            <dd>{n}</dd>
+          </Fragment>
+        ))}
+      </dl>
+      <small class="muted">
+        {state.villagers.length} / {getHousing(state)} alojados. Recluta en la posada y forma a los aldeanos en el taller, el cuartel, el
+        campo de tiro o el templo.
+      </small>
+    </section>
+  );
+}
+
+function Recruiting({ state, building: b, run }: { state: GameState; building: Building; run: Run }) {
+  const level = currentLevelDef(b)!;
+  const slots = level.recruitSlots ?? 0;
+  const housed = state.villagers.length + getIncomingRecruits(state);
+  const housing = getHousing(state);
+  return (
+    <section>
+      <h3>
+        Reclutamiento {b.recruits.length}/{slots}
+      </h3>
+      <ul class="list">
+        {b.recruits.map((r, i) => (
+          <li key={i} class="col">
+            <span>🧑 Aldeano en camino · {fmtTime(r.remainingTicks / TICK_RATE)}</span>
+            <Progress value={1 - r.remainingTicks / r.totalTicks} />
+          </li>
+        ))}
+      </ul>
+      <small class={housed >= housing ? 'warn' : 'muted'}>
+        Alojamiento: {housed} / {housing}
+        {housed >= housing ? ' · construye o mejora casas' : ''}
+      </small>
+      <button
+        class="primary"
+        disabled={b.recruits.length >= slots || housed >= housing || b.construction !== null}
+        onClick={() => run({ type: 'recruitVillager', buildingId: b.id })}
+      >
+        <span>Reclutar aldeano · {fmtTime(level.recruitSeconds ?? 0)}</span>
+        <CostView cost={RECRUIT_COST} state={state} />
+      </button>
+    </section>
+  );
+}
 
 function Training({ state, building: b, run }: { state: GameState; building: Building; run: Run }) {
   const role = BUILDING_DEFS[b.type].trainsRole!;

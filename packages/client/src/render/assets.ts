@@ -7,7 +7,7 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 // empaquetados por tools/build-assets.mjs.
 
 const BASE = `${import.meta.env.BASE_URL}assets/`;
-export const CHARACTERS = ['Knight', 'Barbarian', 'Mage', 'Rogue_Hooded'] as const;
+export const CHARACTERS = ['Knight', 'Barbarian', 'Mage', 'Rogue_Hooded', 'Rogue'] as const;
 export type CharacterName = (typeof CHARACTERS)[number];
 
 export class Assets {

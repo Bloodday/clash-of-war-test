@@ -74,9 +74,27 @@ export function getRepairers(state: GameState, buildingId: number): Villager[] {
   return state.villagers.filter((v) => v.task.kind === 'repair' && v.task.buildingId === buildingId);
 }
 
-/** Aldeanos civiles sin tarea: los únicos que pueden construir o reparar. */
+/** Aldeanos sin formar y sin tarea: esperan a que los mandes a entrenar. */
 export function getIdleCivilians(state: GameState): Villager[] {
   return state.villagers.filter((v) => v.role === null && v.task.kind === 'idle');
+}
+
+/** Albañiles libres, los más expertos primero: los únicos que construyen y reparan. */
+export function getIdleBuilders(state: GameState): Villager[] {
+  return state.villagers
+    .filter((v) => v.role === 'builder' && v.task.kind === 'idle')
+    .sort((a, b) => b.roleLevel - a.roleLevel || a.id - b.id);
+}
+
+/** Multiplicador de velocidad de trabajo de un aldeano (1 si no es albañil). */
+export function workSpeed(v: Villager | undefined): number {
+  if (!v || v.role !== 'builder') return 1;
+  return ROLE_DEFS.builder.levels[v.roleLevel - 1]?.workSpeed ?? 1;
+}
+
+/** Aldeanos en camino en todas las posadas (ocupan alojamiento). */
+export function getIncomingRecruits(state: GameState): number {
+  return state.buildings.reduce((n, b) => n + b.recruits.length, 0);
 }
 
 /** Recurso que produce un edificio (o undefined si no es productor). */

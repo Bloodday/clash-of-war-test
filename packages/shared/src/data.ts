@@ -18,7 +18,7 @@ export const RESOURCE_NAMES: Record<ResourceId, string> = {
 // Roles: los aldeanos aprenden un rol en un edificio de entrenamiento.
 // ---------------------------------------------------------------------------
 
-export const ROLES = ['warrior', 'archer', 'healer'] as const;
+export const ROLES = ['builder', 'warrior', 'archer', 'healer'] as const;
 export type RoleId = (typeof ROLES)[number];
 
 export interface RoleLevelDef {
@@ -28,19 +28,35 @@ export interface RoleLevelDef {
   hp: number;
   damage: number;
   range: number;
+  /** Solo albañiles: multiplicador de velocidad al construir y reparar. */
+  workSpeed?: number;
 }
 
 export interface RoleDef {
   name: string;
   description: string;
+  /** civil: trabaja en la aldea; military: forma parte del ejército. */
+  kind: 'civil' | 'military';
   trainedAt: BuildingType;
   levels: RoleLevelDef[]; // índice 0 = nivel 1
 }
 
 export const ROLE_DEFS: Record<RoleId, RoleDef> = {
+  builder: {
+    name: 'Albañil',
+    description: 'Construye, mejora y repara los edificios. Con más nivel trabaja más rápido.',
+    kind: 'civil',
+    trainedAt: 'workshop',
+    levels: [
+      { cost: { food: 40, gold: 30 }, trainSeconds: 15, hp: 80, damage: 4, range: 1, workSpeed: 1 },
+      { cost: { food: 120, gold: 120 }, trainSeconds: 45, hp: 100, damage: 6, range: 1, workSpeed: 1.35 },
+      { cost: { food: 300, gold: 350 }, trainSeconds: 120, hp: 130, damage: 8, range: 1, workSpeed: 1.75 },
+    ],
+  },
   warrior: {
     name: 'Guerrero',
     description: 'Combatiente cuerpo a cuerpo. Primera línea de ataque y defensa.',
+    kind: 'military',
     trainedAt: 'barracks',
     levels: [
       { cost: { food: 50, gold: 20 }, trainSeconds: 15, hp: 120, damage: 12, range: 1 },
@@ -51,6 +67,7 @@ export const ROLE_DEFS: Record<RoleId, RoleDef> = {
   archer: {
     name: 'Arquero',
     description: 'Ataca a distancia. Frágil, pero letal detrás de un muro.',
+    kind: 'military',
     trainedAt: 'archeryRange',
     levels: [
       { cost: { food: 60, gold: 40 }, trainSeconds: 20, hp: 70, damage: 9, range: 6 },
@@ -61,6 +78,7 @@ export const ROLE_DEFS: Record<RoleId, RoleDef> = {
   healer: {
     name: 'Sanador',
     description: 'Cura a los aliados cercanos durante la batalla.',
+    kind: 'military',
     trainedAt: 'temple',
     levels: [
       { cost: { food: 100, gold: 100 }, trainSeconds: 30, hp: 80, damage: 10, range: 4 },
@@ -84,6 +102,8 @@ export const REPAIR_MIN_HP_PER_SECOND = 15;
 export type BuildingType =
   | 'townHall'
   | 'house'
+  | 'inn'
+  | 'workshop'
   | 'farm'
   | 'lumberCamp'
   | 'goldMine'
@@ -106,6 +126,8 @@ export interface BuildingLevelDef {
   production?: Cost; // por segundo, hacia el depósito propio del edificio
   capacity?: number; // máximo acumulable antes de tener que recolectar
   trainingSlots?: number;
+  recruitSlots?: number; // posada: aldeanos que se reclutan a la vez
+  recruitSeconds?: number;
   damage?: number;
   range?: number;
 }
@@ -150,6 +172,33 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
       { cost: { wood: 100 }, buildSeconds: 10, hp: 400, requiresTownHall: 1, housing: 2 },
       { cost: { wood: 250, gold: 100 }, buildSeconds: 30, hp: 550, requiresTownHall: 2, housing: 3 },
       { cost: { wood: 600, gold: 300 }, buildSeconds: 90, hp: 700, requiresTownHall: 3, housing: 4 },
+    ],
+  },
+  inn: {
+    type: 'inn',
+    name: 'Posada',
+    description: 'Aquí llegan los nuevos aldeanos. Recluta a cambio de comida; luego fórmalos.',
+    category: 'core',
+    size: 3,
+    maxCountByTownHall: [1, 1, 1, 2, 2],
+    levels: [
+      { cost: { wood: 150 }, buildSeconds: 15, hp: 500, requiresTownHall: 1, recruitSlots: 1, recruitSeconds: 20 },
+      { cost: { wood: 500, gold: 300 }, buildSeconds: 60, hp: 700, requiresTownHall: 2, recruitSlots: 2, recruitSeconds: 15 },
+      { cost: { wood: 1400, gold: 1000 }, buildSeconds: 180, hp: 900, requiresTownHall: 3, recruitSlots: 3, recruitSeconds: 10 },
+    ],
+  },
+  workshop: {
+    type: 'workshop',
+    name: 'Taller',
+    description: 'Forma a los aldeanos como albañiles, los únicos que construyen y reparan.',
+    category: 'core',
+    size: 3,
+    trainsRole: 'builder',
+    maxCountByTownHall: [1, 1, 1, 1, 1],
+    levels: [
+      { cost: { wood: 200, gold: 100 }, buildSeconds: 20, hp: 600, requiresTownHall: 1, trainingSlots: 1 },
+      { cost: { wood: 600, gold: 400 }, buildSeconds: 90, hp: 800, requiresTownHall: 2, trainingSlots: 2 },
+      { cost: { wood: 1500, gold: 1200 }, buildSeconds: 240, hp: 1000, requiresTownHall: 3, trainingSlots: 2 },
     ],
   },
   farm: {

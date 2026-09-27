@@ -8,6 +8,7 @@ import {
   deserialize,
   executeCommand,
   getHousing,
+  getIdleBuilders,
   getIdleCivilians,
   getProductionRates,
   getStorageCapacity,
@@ -23,13 +24,15 @@ const seconds = (s: number) => s * TICK_RATE;
 const byType = (state: GameState, type: string) => state.buildings.filter((b) => b.type === type);
 
 describe('estado inicial', () => {
-  it('tiene ayuntamiento, casa, granja con cosecha y tres aldeanos libres', () => {
+  it('tiene ayuntamiento, casa, granja con cosecha, posada, dos albañiles y un aldeano sin formar', () => {
     const s = createInitialState();
     expect(getTownHallLevel(s)).toBe(1);
     expect(byType(s, 'house')).toHaveLength(1);
+    expect(byType(s, 'inn')).toHaveLength(1);
     expect(byType(s, 'farm')[0]!.stored).toBe(120);
     expect(s.villagers).toHaveLength(3);
-    expect(getIdleCivilians(s)).toHaveLength(3);
+    expect(getIdleBuilders(s)).toHaveLength(2);
+    expect(getIdleCivilians(s)).toHaveLength(1);
     expect(getHousing(s)).toBe(5);
     expect(getProductionRates(s).food).toBeCloseTo(0.8);
     for (const b of s.buildings) expect(b.hp).toBe(maxHp(b));
@@ -48,13 +51,33 @@ describe('construcción', () => {
     expect(s.resources.gold).toBe(500 - 80);
     const camp = byType(s, 'lumberCamp')[0]!;
     expect(camp.level).toBe(0);
-    expect(getIdleCivilians(s)).toHaveLength(2);
+    expect(getIdleBuilders(s)).toHaveLength(1);
 
     advance(s, seconds(10));
     expect(camp.level).toBe(1);
     expect(camp.construction).toBeNull();
     expect(camp.hp).toBe(maxHp(camp));
-    expect(getIdleCivilians(s)).toHaveLength(3);
+    expect(getIdleBuilders(s)).toHaveLength(2);
+  });
+
+  it('solo construyen los albañiles: un aldeano sin formar no sirve', () => {
+    const s = createInitialState();
+    for (const v of s.villagers) if (v.role === 'builder') v.task = { kind: 'build', buildingId: 999 };
+    expect(getIdleCivilians(s)).toHaveLength(1);
+    expect(executeCommand(s, { type: 'placeBuilding', building: 'house', x: 1, y: 1 })).toEqual({
+      ok: false,
+      error: 'noIdleBuilder',
+    });
+  });
+
+  it('un albañil de más nivel construye más rápido', () => {
+    const s = createInitialState();
+    s.villagers[0]!.roleLevel = 3; // velocidad ×1,75
+    executeCommand(s, { type: 'placeBuilding', building: 'lumberCamp', x: 2, y: 2 });
+    const camp = byType(s, 'lumberCamp')[0]!;
+    expect(camp.construction!.builderId).toBe(s.villagers[0]!.id); // se elige al más experto
+    advance(s, seconds(6));
+    expect(camp.level).toBe(1); // 10 s de obra / 1,75 ≈ 5,7 s
   });
 
   it('rechaza solapamientos y posiciones fuera del mapa', () => {
@@ -187,25 +210,48 @@ describe('producción y recolección', () => {
     expect(executeCommand(s, { type: 'collect', buildingId: house.id })).toEqual({ ok: false, error: 'notProducer' });
   });
 
-  it('recluta aldeanos mientras haya alojamiento', () => {
+  it('la posada recluta aldeanos sin formar tras un tiempo', () => {
+    const s = createInitialState();
+    const inn = byType(s, 'inn')[0]!;
+    expect(executeCommand(s, { type: 'recruitVillager', buildingId: inn.id })).toEqual({ ok: true });
+    expect(s.resources.food).toBe(240);
+    expect(inn.recruits).toHaveLength(1);
+    // Una plaza a nivel 1: el segundo espera a que quede libre.
+    expect(executeCommand(s, { type: 'recruitVillager', buildingId: inn.id })).toEqual({ ok: false, error: 'noFreeSlot' });
+    advance(s, seconds(20));
+    expect(s.villagers).toHaveLength(4);
+    expect(s.villagers.at(-1)!.role).toBeNull();
+    expect(inn.recruits).toHaveLength(0);
+  });
+
+  it('los aldeanos en camino ocupan alojamiento', () => {
     const s = createInitialState();
     s.resources.food = 1000;
-    expect(executeCommand(s, { type: 'recruitVillager' })).toEqual({ ok: true });
-    expect(executeCommand(s, { type: 'recruitVillager' })).toEqual({ ok: true });
-    expect(s.villagers).toHaveLength(5);
-    expect(executeCommand(s, { type: 'recruitVillager' })).toEqual({ ok: false, error: 'noHousing' });
+    const inn = byType(s, 'inn')[0]!;
+    inn.level = 3; // 3 plazas
+    inn.hp = maxHp(inn);
+    // 3 aldeanos + 2 en camino = 5 = alojamiento: el tercero no cabe aunque haya plaza.
+    expect(executeCommand(s, { type: 'recruitVillager', buildingId: inn.id }).ok).toBe(true);
+    expect(executeCommand(s, { type: 'recruitVillager', buildingId: inn.id }).ok).toBe(true);
+    expect(executeCommand(s, { type: 'recruitVillager', buildingId: inn.id })).toEqual({ ok: false, error: 'noHousing' });
+  });
+
+  it('solo la posada recluta', () => {
+    const s = createInitialState();
+    const th = byType(s, 'townHall')[0]!;
+    expect(executeCommand(s, { type: 'recruitVillager', buildingId: th.id })).toEqual({ ok: false, error: 'notInn' });
   });
 });
 
 describe('daño y reparación', () => {
-  it('un aldeano libre repara solo el edificio dañado', () => {
+  it('un albañil libre repara solo el edificio dañado', () => {
     const s = createInitialState();
     const house = byType(s, 'house')[0]!;
     applyDamage(s, house.id, 300);
     expect(house.hp).toBe(100);
     tick(s);
     const repairer = s.villagers.find((v) => v.task.kind === 'repair');
-    expect(repairer).toBeDefined();
+    expect(repairer?.role).toBe('builder');
     advance(s, seconds(30));
     expect(house.hp).toBe(maxHp(house));
     expect(repairer!.task.kind).toBe('idle');
@@ -215,6 +261,7 @@ describe('daño y reparación', () => {
     const s = createInitialState();
     for (const v of s.villagers) v.task = { kind: 'build', buildingId: 999 }; // nadie libre
     const farm = byType(s, 'farm')[0]!;
+    expect(s.villagers[0]!.role).toBe('builder');
     applyDamage(s, farm.id, 9999);
     expect(farm.hp).toBe(0);
     expect(isOperational(farm)).toBe(false);
@@ -272,6 +319,21 @@ describe('entrenamiento de roles', () => {
     expect(v.role).toBe('warrior');
     expect(v.roleLevel).toBe(1);
     expect(v.task.kind).toBe('idle');
+  });
+
+  it('el taller forma albañiles', () => {
+    const s = createInitialState();
+    s.resources.food = 1000;
+    s.resources.gold = 1000;
+    s.resources.wood = 1000;
+    executeCommand(s, { type: 'placeBuilding', building: 'workshop', x: 2, y: 2 });
+    advance(s, seconds(20));
+    const workshop = byType(s, 'workshop')[0]!;
+    const v = getIdleCivilians(s)[0]!;
+    expect(executeCommand(s, { type: 'trainVillager', villagerId: v.id, buildingId: workshop.id })).toEqual({ ok: true });
+    advance(s, seconds(15));
+    expect(v.role).toBe('builder');
+    expect(getIdleBuilders(s)).toHaveLength(3);
   });
 
   it('los soldados no construyen ni reparan', () => {
@@ -341,10 +403,37 @@ describe('guardado', () => {
       },
     };
     const loaded = deserialize(JSON.stringify(v1), 0)!;
-    expect(loaded.state.version).toBe(2);
+    expect(loaded.state.version).toBe(3);
     expect(loaded.state.buildings[0]!.hp).toBe(550);
     expect(loaded.state.buildings[0]!.stored).toBe(0);
+    expect(loaded.state.buildings[0]!.recruits).toEqual([]);
     expect(loaded.state.villagers[0]!.task).toEqual({ kind: 'idle' });
+    // Los civiles que construían conservan su oficio como albañiles.
+    expect(loaded.state.villagers[0]!.role).toBe('builder');
+  });
+
+  it('migra partidas de la versión 2 sin tocar a los soldados', () => {
+    const v2 = {
+      savedAt: 0,
+      state: {
+        version: 2,
+        tick: 5,
+        rng: 1,
+        nextId: 4,
+        resources: { gold: 10, wood: 20, food: 30 },
+        buildings: [{ id: 1, type: 'farm', x: 0, y: 0, level: 1, construction: null, hp: 400, stored: 7 }],
+        villagers: [
+          { id: 2, name: 'Aldo', role: null, roleLevel: 0, task: { kind: 'idle' } },
+          { id: 3, name: 'Berta', role: 'archer', roleLevel: 2, task: { kind: 'idle' } },
+        ],
+      },
+    };
+    const loaded = deserialize(JSON.stringify(v2), 0)!;
+    expect(loaded.state.buildings[0]!.stored).toBe(7);
+    expect(loaded.state.villagers.map((v) => [v.role, v.roleLevel])).toEqual([
+      ['builder', 1],
+      ['archer', 2],
+    ]);
   });
 
   it('ignora datos corruptos o de versiones desconocidas', () => {

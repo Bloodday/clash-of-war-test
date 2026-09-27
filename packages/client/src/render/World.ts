@@ -101,6 +101,7 @@ export class World {
     this.camera.lookAt(0, 0, 0);
     this.env = new Environment(this.scene, assets);
     this.villagers = new VillagerAgents(assets, this.particles);
+    this.villagers.onArrive = (v, at) => this.overlays.floatText(at.clone().setY(1.6), `¡Llega ${v.name}!`, 'good');
     this.scene.add(this.buildingsRoot, this.villagers.group, this.particles.group);
     this.overlays = new Overlays(overlayRoot, this.camera, container);
   }
@@ -356,7 +357,7 @@ export class World {
       if (!view) continue;
       const v = view.visual;
       const producing = Object.keys(getBuildingProduction(b)).length > 0;
-      const working = isOperational(b) && (producing || getTrainees(state, b.id).length > 0);
+      const working = isOperational(b) && (producing || getTrainees(state, b.id).length > 0 || b.recruits.length > 0);
       v.update(dt, working);
       if (producedResource(b.type)) v.setFill(b.stored / Math.max(1, producerCapacity(b)));
 
@@ -534,6 +535,16 @@ export class World {
           kind: 'hp',
         });
       }
+      b.recruits.forEach((r, i) => {
+        items.push({
+          key: `r${b.id}:${i}`,
+          pos: top.clone().setY(top.y + 0.7 * i),
+          label: '🧑 Llegando',
+          seconds: r.remainingTicks / TICK_RATE,
+          progress: 1 - r.remainingTicks / r.totalTicks,
+          kind: 'train',
+        });
+      });
       getTrainees(state, b.id).forEach((v, i) => {
         if (v.task.kind !== 'train') return;
         items.push({

@@ -2,7 +2,7 @@ import {
   RESOURCES,
   RESOURCE_NAMES,
   getHousing,
-  getIdleCivilians,
+  getIdleBuilders,
   getProductionRates,
   getStorageCapacity,
   getTownHallLevel,
@@ -14,9 +14,10 @@ import { AnimatedNumber } from './AnimatedNumber';
 export function TopBar({ state }: { state: GameState }) {
   const cap = getStorageCapacity(state);
   const rates = getProductionRates(state);
-  const soldiers = state.villagers.filter((v) => v.role !== null).length;
-  const civilians = state.villagers.filter((v) => v.role === null);
-  const idleBuilders = getIdleCivilians(state).length;
+  const builders = state.villagers.filter((v) => v.role === 'builder').length;
+  const idleBuilders = getIdleBuilders(state).length;
+  const unformed = state.villagers.filter((v) => v.role === null).length;
+  const soldiersOnly = state.villagers.filter((v) => v.role !== null && v.role !== 'builder').length;
   return (
     <div class="topbar panel">
       <div class="stat" title="Nivel del ayuntamiento">
@@ -43,12 +44,15 @@ export function TopBar({ state }: { state: GameState }) {
         👥 <b>{state.villagers.length}</b>
         <small> / {getHousing(state)}</small>
       </div>
-      <div class={idleBuilders === 0 ? 'stat busy' : 'stat'} title="Constructores libres / aldeanos civiles">
+      <div class={idleBuilders === 0 ? 'stat busy' : 'stat'} title="Albañiles libres / albañiles">
         🔨 <b>{idleBuilders}</b>
-        <small> / {civilians.length}</small>
+        <small> / {builders}</small>
+      </div>
+      <div class={unformed > 0 ? 'stat waiting' : 'stat'} title="Aldeanos sin formar: mándalos al taller o a un edificio militar">
+        🧑 <b>{unformed}</b>
       </div>
       <div class="stat" title="Soldados entrenados">
-        ⚔️ <b>{soldiers}</b>
+        ⚔️ <b>{soldiersOnly}</b>
       </div>
     </div>
   );

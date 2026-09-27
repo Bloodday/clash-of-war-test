@@ -26,7 +26,7 @@ export async function renderThumbnails(renderer: THREE.WebGPURenderer, assets: A
 
   const prevToneMapping = renderer.toneMapping;
   for (const [key, type, level] of jobs) {
-    const b: Building = { id: -1, type, x: 0, y: 0, level, construction: null, hp: 1, stored: 0 };
+    const b: Building = { id: -1, type, x: 0, y: 0, level, construction: null, hp: 1, stored: 0, recruits: [] };
     const visual = createBuildingVisual(assets, b, type === 'wall' ? 3 : 0);
     scene.add(visual.root);
     const box = localBounds(visual.root);

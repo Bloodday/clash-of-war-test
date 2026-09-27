@@ -1,6 +1,14 @@
 import { REPAIR_MIN_HP_PER_SECOND, REPAIR_RATE, TICK_RATE } from './data';
-import { currentLevelDef, getIdleCivilians, isDamaged, isOperational, producedResource, producerCapacity } from './queries';
-import { maxHp, type GameState } from './state';
+import {
+  currentLevelDef,
+  getIdleBuilders,
+  isDamaged,
+  isOperational,
+  producedResource,
+  producerCapacity,
+  workSpeed,
+} from './queries';
+import { createVillager, maxHp, type GameState } from './state';
 
 /**
  * Avanza la simulación `dt` ticks. Con dt=1 es el paso normal del bucle de
@@ -17,11 +25,11 @@ export function tick(state: GameState, dt = 1): void {
     b.stored = Math.min(producerCapacity(b), b.stored + (prod[r] ?? 0) * seconds);
   }
 
-  // 2) Obras.
+  // 2) Obras: los albañiles con más nivel trabajan más rápido.
   for (const b of state.buildings) {
     const c = b.construction;
     if (!c) continue;
-    c.remainingTicks -= dt;
+    c.remainingTicks -= dt * workSpeed(state.villagers.find((v) => v.id === c.builderId));
     if (c.remainingTicks <= 0) {
       b.level = c.targetLevel;
       b.construction = null;
@@ -31,7 +39,7 @@ export function tick(state: GameState, dt = 1): void {
     }
   }
 
-  // 3) Reparaciones: los aldeanos civiles libres acuden solos a los edificios dañados.
+  // 3) Reparaciones: los albañiles libres acuden solos a los edificios dañados.
   assignRepairs(state);
   for (const v of state.villagers) {
     const t = v.task;
@@ -42,11 +50,20 @@ export function tick(state: GameState, dt = 1): void {
       continue;
     }
     const max = maxHp(b);
-    b.hp = Math.min(max, b.hp + Math.max(REPAIR_MIN_HP_PER_SECOND, max * REPAIR_RATE) * seconds);
+    b.hp = Math.min(max, b.hp + Math.max(REPAIR_MIN_HP_PER_SECOND, max * REPAIR_RATE) * workSpeed(v) * seconds);
     if (b.hp >= max) v.task = { kind: 'idle' };
   }
 
-  // 4) Entrenamiento.
+  // 4) Reclutamiento en las posadas (en paralelo, una plaza por aldeano).
+  for (const b of state.buildings) {
+    if (b.recruits.length === 0 || !isOperational(b)) continue;
+    for (const r of b.recruits) r.remainingTicks -= dt;
+    const arrived = b.recruits.filter((r) => r.remainingTicks <= 0).length;
+    b.recruits = b.recruits.filter((r) => r.remainingTicks > 0);
+    for (let i = 0; i < arrived; i++) createVillager(state);
+  }
+
+  // 5) Entrenamiento.
   for (const v of state.villagers) {
     const t = v.task;
     if (t.kind !== 'train') continue;
@@ -68,7 +85,7 @@ function assignRepairs(state: GameState): void {
     .filter((b) => !state.villagers.some((v) => v.task.kind === 'repair' && v.task.buildingId === b.id))
     .sort((a, b) => a.hp / maxHp(a) - b.hp / maxHp(b) || a.id - b.id);
   if (damaged.length === 0) return;
-  const idle = getIdleCivilians(state);
+  const idle = getIdleBuilders(state);
   for (let i = 0; i < damaged.length && i < idle.length; i++) {
     idle[i]!.task = { kind: 'repair', buildingId: damaged[i]!.id };
   }
