@@ -36,6 +36,7 @@ export const ERROR_MESSAGES: Record<CommandError, string> = {
   buildingLevelTooLow: 'Mejora el edificio para entrenar el siguiente nivel.',
   noHousing: 'Construye o mejora casas para alojar a más aldeanos.',
   notInn: 'Los aldeanos se reclutan en la posada.',
+  roleLocked: 'Un aldeano formado no puede cambiar de oficio.',
 };
 
 const FEMININE = new Set<BuildingType>(['house', 'farm', 'goldMine', 'archerTower']);

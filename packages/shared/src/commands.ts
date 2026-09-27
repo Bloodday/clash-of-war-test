@@ -52,7 +52,8 @@ export type CommandError =
   | 'notTrainingBuilding'
   | 'buildingLevelTooLow'
   | 'noHousing'
-  | 'notInn';
+  | 'notInn'
+  | 'roleLocked';
 
 export type CommandResult = { ok: true } | { ok: false; error: CommandError };
 
@@ -158,6 +159,8 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       if (!role) return fail('notTrainingBuilding');
       if (!isOperational(b)) return fail('busy');
       if (v.task.kind !== 'idle') return fail('busy');
+      // El oficio es para siempre: solo se forma a los aldeanos sin formar o se sube de nivel.
+      if (v.role !== null && v.role !== role) return fail('roleLocked');
       const target = nextRoleLevel(v, role);
       if (target > roleMaxLevel(role)) return fail('maxLevel');
       if (b.level < target) return fail('buildingLevelTooLow');

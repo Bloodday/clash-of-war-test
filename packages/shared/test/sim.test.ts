@@ -369,9 +369,19 @@ describe('entrenamiento de roles', () => {
     });
   });
 
+  it('un aldeano formado no puede cambiar de oficio', () => {
+    const { s, barracks } = withBarracks();
+    const mason = s.villagers.find((v) => v.role === 'builder')!;
+    expect(executeCommand(s, { type: 'trainVillager', villagerId: mason.id, buildingId: barracks.id })).toEqual({
+      ok: false,
+      error: 'roleLocked',
+    });
+  });
+
   it('respeta los huecos de entrenamiento', () => {
     const { s, barracks } = withBarracks();
-    const [a, b] = s.villagers;
+    s.villagers.push({ id: 901, name: 'Otro', role: null, roleLevel: 0, task: { kind: 'idle' } });
+    const [a, b] = s.villagers.filter((v) => v.role === null);
     expect(executeCommand(s, { type: 'trainVillager', villagerId: a!.id, buildingId: barracks.id }).ok).toBe(true);
     expect(executeCommand(s, { type: 'trainVillager', villagerId: b!.id, buildingId: barracks.id })).toEqual({
       ok: false,
