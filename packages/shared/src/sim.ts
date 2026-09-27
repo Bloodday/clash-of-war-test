@@ -63,7 +63,15 @@ export function tick(state: GameState, dt = 1): void {
     for (let i = 0; i < arrived; i++) createVillager(state);
   }
 
-  // 5) Entrenamiento.
+  // 5) Heridos de batalla que se recuperan.
+  for (const v of state.villagers) {
+    const t = v.task;
+    if (t.kind !== 'wounded') continue;
+    t.remainingTicks -= dt;
+    if (t.remainingTicks <= 0) v.task = { kind: 'idle' };
+  }
+
+  // 6) Entrenamiento.
   for (const v of state.villagers) {
     const t = v.task;
     if (t.kind !== 'train') continue;

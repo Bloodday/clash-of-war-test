@@ -35,6 +35,7 @@ export type VillagerTask =
   | { kind: 'idle' }
   | { kind: 'build'; buildingId: number }
   | { kind: 'repair'; buildingId: number }
+  | { kind: 'wounded'; remainingTicks: number; totalTicks: number } // cayó en batalla: se recupera
   | {
       kind: 'train';
       buildingId: number;

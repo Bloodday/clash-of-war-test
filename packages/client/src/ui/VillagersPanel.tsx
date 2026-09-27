@@ -21,7 +21,7 @@ export function VillagersPanel({ state, ui, onClose }: { state: GameState; ui: U
         </thead>
         <tbody>
           {state.villagers.map((v) => {
-            const target = v.task.kind === 'idle' ? null : v.task.buildingId;
+            const target = 'buildingId' in v.task ? v.task.buildingId : null;
             return (
               <tr key={v.id} class={target !== null ? 'clickable' : ''} onClick={() => target !== null && ui.select(target)}>
                 <td>{v.name}</td>

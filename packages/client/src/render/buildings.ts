@@ -2,7 +2,22 @@ import * as THREE from 'three/webgpu';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { hash, instanceIndex, positionLocal, sin, time, vec3, vertexColor } from 'three/tsl';
 import { BUILDING_DEFS, type Building, type BuildingType } from '@cow/shared';
-import { localBounds, type Assets } from './assets';
+import { localBounds } from './assets';
+
+/** Fuente de modelos (Assets o una versión con el color de otro equipo). */
+export interface ModelSource {
+  model(name: string): THREE.Object3D;
+  has(name: string): boolean;
+}
+
+export type Team = 'blue' | 'red';
+
+/** Mismos modelos con el color de otro equipo (los packs traen variantes _blue/_red). */
+export function teamModels(src: ModelSource, team: Team): ModelSource {
+  if (team === 'blue') return src;
+  const swap = (n: string) => n.replace('_blue', `_${team}`);
+  return { model: (n) => src.model(swap(n)), has: (n) => src.has(swap(n)) };
+}
 import { seeded } from './noise';
 
 // Representación visual de los edificios a partir de los modelos KayKit.
@@ -256,7 +271,7 @@ function makeVisual(root: THREE.Group, body: THREE.Group, height: number, smoke:
   };
 }
 
-export function createBuildingVisual(assets: Assets, b: Building, wallMask = 0, constructionStage = 0): BuildingVisual {
+export function createBuildingVisual(assets: ModelSource, b: Building, wallMask = 0, constructionStage = 0): BuildingVisual {
   const size = BUILDING_DEFS[b.type].size;
   const root = new THREE.Group();
   const body = new THREE.Group();
@@ -312,7 +327,7 @@ export function createBuildingVisual(assets: Assets, b: Building, wallMask = 0, 
   return makeVisual(root, body, height, smoke);
 }
 
-function addProp(assets: Assets, parent: THREE.Object3D, name: string, x: number, z: number, width: number, rot = 0): void {
+function addProp(assets: ModelSource, parent: THREE.Object3D, name: string, x: number, z: number, width: number, rot = 0): void {
   if (!assets.has(name)) return;
   const obj = assets.model(name);
   const holder = new THREE.Group();
@@ -326,7 +341,7 @@ function addProp(assets: Assets, parent: THREE.Object3D, name: string, x: number
   parent.add(holder);
 }
 
-function addScaffoldAround(assets: Assets, parent: THREE.Object3D, size: number, height: number): void {
+function addScaffoldAround(assets: ModelSource, parent: THREE.Object3D, size: number, height: number): void {
   const s = assets.model('building_scaffolding');
   const h = fit(s, size * 0.98);
   s.scale.y *= Math.max(0.6, (height * 0.75) / h);
@@ -335,7 +350,7 @@ function addScaffoldAround(assets: Assets, parent: THREE.Object3D, size: number,
 }
 
 /** Solar en obras: cimientos, fase de la construcción, andamio y material apilado. */
-function buildSite(assets: Assets, body: THREE.Group, size: number, stage: number): number {
+function buildSite(assets: ModelSource, body: THREE.Group, size: number, stage: number): number {
   body.add(pad(size, PAD_DIRT));
   const stageModel = assets.model(['building_stage_A', 'building_stage_B', 'building_stage_C'][stage] ?? 'building_stage_A');
   const h = fit(stageModel, size * 0.8);
@@ -398,7 +413,7 @@ function mergeGeometries(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return out;
 }
 
-function buildFarm(assets: Assets, body: THREE.Group, size: number, level: number): number {
+function buildFarm(assets: ModelSource, body: THREE.Group, size: number, level: number): number {
   const soil = new THREE.Mesh(
     cached(`soil:${size}`, () => new RoundedBoxGeometry(size - 0.12, 0.16, size - 0.12, 2, 0.06)),
     standard('#8a5d34', 1),
@@ -454,7 +469,7 @@ function buildFarm(assets: Assets, body: THREE.Group, size: number, level: numbe
 
 const WALL_MODELS = ['fence_wood_straight', 'fence_stone_straight', 'wall_straight'];
 
-function buildWall(assets: Assets, body: THREE.Group, level: number, mask: number): number {
+function buildWall(assets: ModelSource, body: THREE.Group, level: number, mask: number): number {
   const name = WALL_MODELS[Math.min(level, WALL_MODELS.length) - 1]!;
   const heightK = level === 3 ? 1.0 : 0.75;
   const segment = (length: number, thick: number, height: number, x: number, z: number, alongX: boolean) => {
@@ -493,7 +508,7 @@ function buildWall(assets: Assets, body: THREE.Group, level: number, mask: numbe
 const ghostOk = new THREE.MeshStandardMaterial({ color: '#5fe07a', transparent: true, opacity: 0.5, depthWrite: false, emissive: new THREE.Color('#1f7a33') });
 const ghostBad = new THREE.MeshStandardMaterial({ color: '#ff4a3d', transparent: true, opacity: 0.5, depthWrite: false, emissive: new THREE.Color('#7a1f1a') });
 
-export function createGhost(assets: Assets, type: BuildingType): THREE.Group {
+export function createGhost(assets: ModelSource, type: BuildingType): THREE.Group {
   const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null, hp: 1, stored: 0, recruits: [] };
   const g = createBuildingVisual(assets, fake).root;
   const size = BUILDING_DEFS[type].size;

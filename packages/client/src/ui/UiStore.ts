@@ -1,4 +1,5 @@
 import type { BuildingType } from '@cow/shared';
+import type { BattleController } from '../game/BattleController';
 import type { Quality } from '../render/postfx';
 
 const QUALITY_KEY = 'clash-of-war:quality';
@@ -41,6 +42,24 @@ export class UiStore {
   onQualityChange: (q: Quality) => void = () => {};
   /** Recolecta un productor con su animación (lo implementa el mundo 3D). */
   collect: (buildingId: number) => void = () => {};
+  /** Batalla en curso (null en la aldea). */
+  battle: BattleController | null = null;
+  /** Tropa elegida para desplegar: "rol:nivel". */
+  deploy: string | null = null;
+  /** Estrellas recién ganadas (para la animación del HUD). */
+  starFlash = 0;
+  /** Lo implementa el mundo: empezar/terminar batallas y selección. */
+  startBattle: () => void = () => {};
+  nextOpponent: () => void = () => {};
+  leaveBattle: () => void = () => {};
+  selectAllUnits: () => void = () => {};
+  selectedUnits: () => number[] = () => [];
+
+  battleStar(stars: number): void {
+    this.starFlash = stars;
+    this.notify();
+  }
+
   /** Herramienta de pruebas: daña edificios al azar para ver las reparaciones. */
   simulateAttack: () => void = () => {};
   private nextToast = 1;

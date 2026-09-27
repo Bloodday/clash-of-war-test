@@ -1,5 +1,6 @@
 import { render } from 'preact';
 import { GameController } from './game/GameController';
+import { BattleController } from './game/BattleController';
 import { Assets } from './render/assets';
 import { World } from './render/World';
 import { renderThumbnails } from './render/thumbnails';
@@ -39,6 +40,9 @@ async function main() {
   }
   ui.onQualityChange = (q) => world.setQuality(q);
   ui.collect = (id) => world.collect(id);
+  ui.startBattle = () => world.enterBattle(new BattleController(game, (Date.now() ^ (Math.random() * 1e9)) >>> 0));
+  ui.nextOpponent = () => world.enterBattle(new BattleController(game, (Date.now() ^ (Math.random() * 1e9)) >>> 0));
+  ui.leaveBattle = () => world.exitBattle();
   ui.simulateAttack = () => world.simulateAttack();
   // Sin preferencia guardada, WebGL 2 arranca en calidad media.
   if (ui.qualityAuto && ui.backend !== 'WebGPU') ui.setQuality('medium', true);

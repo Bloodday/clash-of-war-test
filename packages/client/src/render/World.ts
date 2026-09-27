@@ -37,6 +37,8 @@ import { Overlays, type Bubble, type OverlayItem } from './overlays';
 import { Particles } from './particles';
 import { PostFX, type Quality } from './postfx';
 import { VillagerAgents } from './villagers';
+import { BattleView } from './battleView';
+import type { BattleController } from '../game/BattleController';
 
 interface BuildingView {
   key: string;
@@ -85,6 +87,7 @@ export class World {
   private elapsed = 0;
   private intro = { t: 0, duration: 3.2, from: new THREE.Vector3(-38, 58, 70) };
   private firstSync = true;
+  private battleView: BattleView | null = null;
   private lastFullWarning = 0;
   private lastHoverCheck = 0;
   private shake = 0;
@@ -152,6 +155,61 @@ export class World {
     renderer.setAnimationLoop(() => this.frame());
   }
 
+  /** Entra en una batalla: se oculta la aldea y se muestra la base enemiga. */
+  enterBattle(battle: BattleController): void {
+    this.exitBattle();
+    this.ui.select(null);
+    this.ui.setMode({ kind: 'idle' });
+    this.buildingsRoot.visible = false;
+    this.villagers.group.visible = false;
+    if (this.selection) {
+      this.scene.remove(this.selection.frame);
+      if (this.selection.ring) this.scene.remove(this.selection.ring);
+      this.selection = null;
+    }
+    this.overlays.setBubbles([]);
+    this.overlays.update([], 0);
+    this.env.setGridVisible(false);
+    this.battleView = new BattleView(
+      {
+        scene: this.scene,
+        camera: this.camera,
+        controls: this.controls,
+        dom: this.renderer.domElement,
+        assets: this.assets,
+        particles: this.particles,
+        overlays: this.overlays,
+        ui: this.ui,
+        shake: (a) => (this.shake = Math.max(this.shake, a)),
+      },
+      battle,
+    );
+    // Controles RTS: izquierdo = seleccionar/desplegar, central = desplazar, derecho = rotar u ordenar.
+    this.controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
+    this.controls.target.set(0, 0, 0);
+    this.camera.position.set(0, 19, 17);
+    this.ui.battle = battle;
+    const first = battle.state.reserve[0];
+    this.ui.deploy = first ? `${first.role}:${first.level}` : null;
+    this.ui.selectAllUnits = () => this.battleView?.selectAll();
+    this.ui.selectedUnits = () => (this.battleView ? [...this.battleView.selected] : []);
+    this.ui.notify();
+  }
+
+  exitBattle(): void {
+    if (!this.battleView) return;
+    this.battleView.dispose();
+    this.battleView = null;
+    this.buildingsRoot.visible = true;
+    this.villagers.group.visible = true;
+    this.controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+    this.controls.target.set(0, 0, 0);
+    this.camera.position.copy(HOME_CAMERA);
+    this.ui.battle = null;
+    this.ui.deploy = null;
+    this.ui.notify();
+  }
+
   setQuality(q: Quality): void {
     this.post?.setQuality(q);
   }
@@ -168,11 +226,17 @@ export class World {
     this.elapsed += dt;
 
     this.game.update(dtMs);
-    this.syncBuildings();
-    this.animateBuildings(dt);
-    this.syncSelection(dt);
-    this.syncGhost();
-    this.villagers.update(this.game.state, dt * this.game.speed ** 0.5);
+    if (this.battleView) {
+      // En batalla la aldea sigue su curso (producción, obras…) pero no se dibuja.
+      this.battleView.battle.update(dtMs);
+      this.battleView.update(dt);
+    } else {
+      this.syncBuildings();
+      this.animateBuildings(dt);
+      this.syncSelection(dt);
+      this.syncGhost();
+      this.villagers.update(this.game.state, dt * this.game.speed ** 0.5);
+    }
     this.particles.update(dt);
     this.updateCamera(dt);
     this.env.update(dt, this.controls.target);
@@ -186,7 +250,7 @@ export class World {
     this.camera.position.add(offset);
     this.post.render();
     this.camera.position.sub(offset);
-    this.updateOverlays(dt);
+    if (!this.battleView) this.updateOverlays(dt);
     this.autoQuality(dtMs);
   }
 
@@ -584,24 +648,45 @@ export class World {
     el.addEventListener('contextmenu', (e) => e.preventDefault());
     el.addEventListener('pointermove', (e) => {
       this.setPointer(e);
-      this.hoverCollect();
+      if (this.battleView) this.battleView.pointerMove(e);
+      else this.hoverCollect();
     });
     el.addEventListener('pointerleave', () => (this.pointerInside = false));
     el.addEventListener('pointerdown', (e) => {
       this.setPointer(e);
       this.down = { x: e.clientX, y: e.clientY, button: e.button };
+      this.battleView?.pointerDown(e);
+    });
+    // En batalla el arrastre con clic izquierdo es selección: se escucha en window para no perder el final.
+    window.addEventListener('pointermove', (e) => {
+      if (this.battleView && this.down?.button === 0 && e.target !== el) this.battleView.pointerMove(e);
+    });
+    window.addEventListener('pointerup', (e) => {
+      if (this.battleView && this.down?.button === 0 && e.target !== el) {
+        this.down = null;
+        this.battleView.pointerUp(e, false);
+      }
     });
     el.addEventListener('pointerup', (e) => {
       const d = this.down;
       this.down = null;
       if (!d || d.button !== e.button) return;
-      if (Math.hypot(e.clientX - d.x, e.clientY - d.y) > CLICK_TOLERANCE_PX) return;
+      const click = Math.hypot(e.clientX - d.x, e.clientY - d.y) <= CLICK_TOLERANCE_PX;
+      if (this.battleView) {
+        this.battleView.pointerUp(e, click);
+        return;
+      }
+      if (!click) return;
       this.setPointer(e);
       if (e.button === 0) this.onClick(e.shiftKey);
       else if (e.button === 2) this.cancel();
     });
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') this.cancel();
+      if (e.key !== 'Escape') return;
+      if (this.battleView) {
+        this.ui.deploy = null;
+        this.battleView.clearSelection();
+      } else this.cancel();
     });
   }
 

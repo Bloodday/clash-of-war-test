@@ -2,6 +2,7 @@ import {
   BUILDING_DEFS,
   RESOURCES,
   ROLE_DEFS,
+  TICK_RATE,
   type BuildingType,
   type CommandError,
   type Cost,
@@ -76,6 +77,8 @@ export function taskLabel(state: GameState, v: Villager): string {
   switch (t.kind) {
     case 'idle':
       return !v.role ? 'Esperando formación' : v.role === 'builder' ? 'Libre' : 'En guardia';
+    case 'wounded':
+      return `Herido · se recupera en ${fmtTime(t.remainingTicks / TICK_RATE)}`;
     case 'repair':
       return `Reparando · ${bName(t.buildingId)}`;
     case 'build':

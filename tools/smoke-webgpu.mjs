@@ -110,6 +110,32 @@ try {
   console.log(`· ataque simulado reparado por los aldeanos (${damaged} edificios afectados)`);
   await page.evaluate(() => (window.game.speed = 1));
 
+  // Batalla: soldados contra una aldea generada, hasta el final.
+  await page.evaluate(() => {
+    const s = window.game.state;
+    let id = 9000;
+    for (const [role, n] of [['warrior', 4], ['archer', 3], ['healer', 1]]) {
+      for (let i = 0; i < n; i++) s.villagers.push({ id: id++, name: `${role}${i}`, role, roleLevel: 2, task: { kind: 'idle' } });
+    }
+    window.ui.startBattle();
+    const b = window.ui.battle;
+    let y = 1;
+    for (const r of [...b.state.reserve]) {
+      let res = b.dispatch({ type: 'deploy', villagerId: r.villagerId, x: 0.6, y });
+      while (!res.ok && y < 39) res = b.dispatch({ type: 'deploy', villagerId: r.villagerId, x: 0.6, y: (y += 0.7) });
+      y += 0.7;
+    }
+    b.speed = 40;
+  });
+  const deployed = await page.evaluate(() => window.ui.battle.state.units.filter((u) => u.side === 'attacker').length);
+  if (deployed < 8) fail(`solo se desplegaron ${deployed} tropas`);
+  await page.waitForFunction(() => window.ui.battle && window.ui.battle.summary, null, { timeout: 300_000 });
+  const summary = await page.evaluate(() => window.ui.battle.summary);
+  console.log(`· batalla: ${summary.stars}★ ${Math.round(summary.destruction * 100)}% · heridos: ${summary.fallen.length}`);
+  await page.screenshot({ path: join(OUT, 'smoke-battle.png') });
+  await page.evaluate(() => window.ui.leaveBattle());
+  if (await page.evaluate(() => !!window.ui.battle)) fail('no se volvió a la aldea');
+
   await page.waitForFunction(() => window.ui.thumbnails.size > 0, null, { timeout: 180_000 });
   console.log(`· miniaturas: ${await page.evaluate(() => window.ui.thumbnails.size)}`);
   await page.getByRole('button', { name: /Construir/ }).click();

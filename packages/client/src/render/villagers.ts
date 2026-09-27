@@ -12,12 +12,12 @@ const WALK_SPEED = 1.5;
 const RUN_SPEED = 3.2;
 const FADE = 0.25;
 
-interface Look {
+export interface Look {
   character: CharacterName;
   show: string[];
 }
 
-function lookFor(v: Villager): Look {
+export function lookFor(v: Pick<Villager, "role" | "roleLevel">): Look {
   const l = v.roleLevel;
   switch (v.role) {
     case 'warrior':
@@ -37,9 +37,9 @@ function lookFor(v: Villager): Look {
   }
 }
 
-const BODY_PART = /_(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
+export const BODY_PART = /_(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
 
-type Activity = 'idle' | 'build' | 'repair' | 'train';
+type Activity = 'idle' | 'build' | 'repair' | 'train' | 'rest';
 
 interface Agent {
   root: THREE.Group;
@@ -193,6 +193,11 @@ export class VillagerAgents {
     if (t.kind === 'repair') return { key: `r${t.buildingId}`, building: byId(t.buildingId), activity: 'repair' };
     if (t.kind === 'build') return { key: `b${t.buildingId}`, building: byId(t.buildingId), activity: 'build' };
     if (t.kind === 'train') return { key: `t${t.buildingId}`, building: byId(t.buildingId), activity: 'train' };
+    if (t.kind === 'wounded') {
+      // Los heridos descansan junto al templo (o el ayuntamiento) hasta recuperarse.
+      const rest = state.buildings.find((b) => b.type === 'temple') ?? state.buildings.find((b) => b.type === 'townHall');
+      return { key: `w${rest?.id}`, building: rest, activity: 'rest' };
+    }
     // Soldados: de guardia junto a su edificio. Sin formar: esperan en la posada.
     // Albañiles libres: pasean de un edificio a otro buscando trabajo.
     const home =
@@ -281,6 +286,14 @@ export class VillagerAgents {
     }
 
     show('Mug', false);
+    if (activity === 'rest') {
+      this.play(agent, 'Sit_Floor_Idle');
+      if (agent.fxClock > 2.5) {
+        agent.fxClock = 0;
+        this.particles.magic(agent.root.position.clone().setY(0.7), '#9dffa0');
+      }
+      return;
+    }
     if (activity === 'build' || activity === 'repair') {
       // Construir y reparar: martillazos con chispas y astillas.
       show('1H_Axe', true);
@@ -332,11 +345,11 @@ function centerOf(b: Building): THREE.Vector3 {
 function spotFor(b: Building, activity: Activity): { spot: THREE.Vector3; face: THREE.Vector3 | null } {
   const size = BUILDING_DEFS[b.type].size;
   const c = centerOf(b);
-  const r = size / 2 + (activity === 'idle' ? 0.8 + Math.random() * (b.type === 'townHall' ? 2.5 : 1.2) : 0.35);
+  const r = size / 2 + (activity === 'idle' || activity === 'rest' ? 0.8 + Math.random() * (b.type === 'townHall' ? 2.5 : 1.2) : 0.35);
   const side = Math.floor(Math.random() * 4);
   const t = (Math.random() * 2 - 1) * (size / 2) * 0.85;
   const spot = c.clone();
   spot.x += side === 0 ? -r : side === 1 ? r : t;
   spot.z += side === 2 ? -r : side === 3 ? r : t;
-  return { spot, face: activity === 'idle' ? null : c };
+  return { spot, face: activity === 'idle' || activity === 'rest' ? null : c };
 }

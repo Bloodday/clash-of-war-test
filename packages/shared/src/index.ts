@@ -5,3 +5,7 @@ export * from './commands';
 export * from './sim';
 export * from './save';
 export { nextRandom } from './rng';
+export * from './battle/types';
+export * from './battle/battle';
+export * from './battle/enemy';
+export { findPath, WALL_COST } from './battle/pathfinding';

@@ -38,11 +38,21 @@ Constructor de aldeas asíncrono (estilo Clash of Clans) cuyo ejército está fo
 - Los albañiles libres acuden solos a repararlo (≈5 % de la vida por segundo, más rápido con más nivel). Un edificio dañado no se puede mejorar.
 - Las batallas (fase 2) usarán `applyDamage` de la simulación; mientras tanto, el botón **💥 Simular ataque** daña edificios al azar para probarlo.
 
-### 3. Batallas (fases 2 y 3)
+### 3. Batallas
 
-- **Vista táctica**: selección por caja, órdenes de mover/atacar y formaciones.
-- **Primera persona**: el jugador "posee" la entidad de un soldado; su IA se sustituye por el input del jugador. Al morir, el control pasa automáticamente a otro soldado vivo al azar.
-- Ambas vistas son dos cámaras y dos esquemas de control sobre **la misma simulación**.
+**Fase 2 (hecha): batalla RTS contra aldeas generadas.**
+
+- **Buscar oponente** (botón ⚔️ Atacar): se genera una aldea enemiga de tu nivel de ayuntamiento, con anillo de muros, torres de arqueros y almacenes dentro, economía y cuarteles fuera, y defensores que protegen su puesto. En la fase de *reconocimiento* ves su botín y puedes pasar a la siguiente o volver; el tiempo (3 min) empieza con el primer despliegue.
+- **Tu ejército son tus aldeanos**: van a la batalla los soldados libres (guerreros, arqueros, sanadores) con su nivel. Los albañiles no combaten.
+- **Despliegue** como en Clash of Clans: eliges tropa abajo y haces clic o arrastras fuera de la **zona roja** (1 celda alrededor de cualquier edificio en pie; se reduce al destruirlos).
+- **Control RTS**: arrastrar con el botón izquierdo para seleccionar, clic derecho sobre el suelo para mover (en formación) o sobre un enemigo/edificio para atacarlo; «Ataque libre» los devuelve a su IA. Botón central/WASD para desplazar, derecho + arrastrar para rotar.
+- **IA**: sin órdenes, los guerreros y arqueros atacan al enemigo cercano o al edificio más próximo; los sanadores curan al aliado más herido y siguen al grupo; los defensores salen a por quien se acerque a su puesto y vuelven; las torres disparan al atacante más cercano.
+- **Caminos**: A* sobre la cuadrícula; los muros cuestan mucho pero se pueden atravesar rompiéndolos, así que las unidades rodean si hay hueco y abren brecha si no.
+- **Resultado**: 1★ por 50 % de destrucción, 1★ por el ayuntamiento, 1★ por el 100 %. El botín de cada edificio se consigue al destruirlo y se suma a tus almacenes (lo que no quepa se pierde).
+- **Heridos**: los soldados que caen no mueren: vuelven heridos y se recuperan en la aldea (45 s por nivel) antes de poder luchar de nuevo.
+- La simulación (`packages/shared/src/battle`) es determinista a 20 ticks/s y solo cambia con comandos (`deploy`, `order`, `surrender`): está lista para ejecutarse en el servidor.
+
+**Fase 3 (pendiente)**: primera persona, poseyendo a una de tus unidades; al morir, el control pasa a otra al azar.
 
 ### 4. Modelo de defensa híbrido
 
@@ -89,7 +99,7 @@ Estética *low-poly* colorida y cálida, en la línea de los constructores de al
 | --- | --- | --- |
 | 1 | Construcción de la aldea: edificios, economía, aldeanos, entrenamiento de roles, guardado local | ✅ Hecha |
 | 1.5 | Pulido: arte glTF, animaciones, partículas, postprocesado ✅ · sonido y balance pendientes | En curso |
-| 2 | Batalla RTS: simulación de combate en `shared`, IA de unidades y defensas, selección y órdenes, pathfinding | Pendiente |
+| 2 | Batalla RTS: simulación de combate en `shared`, IA de unidades y defensas, selección y órdenes, pathfinding | ✅ Hecha |
 | 2.5 | Servidor autoritativo de batalla (Node + WebSocket), ataques asíncronos contra la IA | Pendiente |
 | 3 | Primera persona: poseer soldados, cambio táctica ↔ FPS, relevo al morir | Pendiente |
 | 4 | Backend completo: cuentas, base de datos, emparejamiento, notificaciones, PvP en vivo del defensor | Pendiente |

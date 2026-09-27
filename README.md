@@ -6,7 +6,7 @@ Juego de estrategia en el navegador inspirado en Clash of Clans, con tres giros:
 2. **Primera persona en batalla**: al atacar o defender puedes tomar el control de un soldado; si muere, pasas a otro al azar.
 3. **Vista táctica ↔ primera persona**: cambia en cualquier momento entre mandar al ejército desde arriba (RTS) y luchar en persona.
 
-Ahora mismo está implementada la **fase 1: construcción de la aldea**, con arte 3D, animaciones, partículas y postprocesado. Ver [docs/diseno.md](docs/diseno.md) para el diseño completo y la hoja de ruta.
+Ahora mismo están implementadas la **fase 1: construcción de la aldea** (con arte 3D, animaciones, partículas y postprocesado) y la **fase 2: batallas RTS** contra aldeas generadas. Ver [docs/diseno.md](docs/diseno.md) para el diseño completo y la hoja de ruta.
 
 ## Cómo ejecutarlo
 
@@ -64,6 +64,17 @@ KAYKIT_DIR=../kaykit pnpm assets
 | Zoom | Rueda |
 | Cancelar / deseleccionar | Esc · clic derecho |
 | Colocar en cadena | Mayús + clic (los muros lo hacen siempre) |
+
+### En batalla
+
+| Acción | Control |
+| --- | --- |
+| Desplegar tropa | Elegirla abajo y clic (o arrastrar) fuera de la zona roja |
+| Seleccionar unidades | Clic o arrastrar con el botón izquierdo (Mayús: añadir) |
+| Mover / atacar | Clic derecho en el suelo / sobre un enemigo o edificio |
+| Desplazar cámara | Botón central · WASD |
+| Rotar cámara | Arrastrar con clic derecho |
+| Dejar de desplegar / deseleccionar | Esc |
 
 Los botones ×1 / ×5 / ×20 aceleran el tiempo para probar, y **💥 Simular ataque** daña edificios al azar para ver cómo los aldeanos los reparan. La partida se guarda sola en `localStorage`, y al volver la aldea avanza lo que haya pasado mientras estabas fuera (hasta 8 h).
 

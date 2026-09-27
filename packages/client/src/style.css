@@ -1030,3 +1030,249 @@ small.warn {
   color: #ffd764;
   animation: pulse 1.2s ease-in-out infinite;
 }
+
+/* =========================================================================
+   Batalla
+   ========================================================================= */
+button.attack {
+  background: linear-gradient(#ff7b5c, #d8432b 55%, #a52a18);
+  box-shadow: 0 3px 0 #6e1a0e, inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  color: #fff;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.box-select {
+  position: fixed;
+  display: none;
+  border: 2px solid #ffe066;
+  background: rgba(255, 224, 102, 0.12);
+  pointer-events: none;
+  z-index: 30;
+  border-radius: 3px;
+}
+
+.battle-top {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 8px 18px;
+  white-space: nowrap;
+  animation: drop-center 0.6s var(--spring) both;
+}
+@keyframes drop-center {
+  from {
+    transform: translate(-50%, -40px);
+    opacity: 0;
+  }
+}
+.enemy {
+  display: flex;
+  flex-direction: column;
+}
+.enemy b {
+  font-size: 15px;
+  color: #ffb4a8;
+}
+.enemy small,
+.loot small {
+  color: var(--muted);
+  font-size: 11px;
+}
+.battle-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.timer {
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: center;
+}
+.timer.scouting {
+  font-size: 14px;
+  color: #9fd3ff;
+}
+.timer.low {
+  color: #ff7a6a;
+  animation: pulse 0.8s ease-in-out infinite;
+}
+.destruction {
+  font-size: 20px;
+  font-weight: 800;
+  min-width: 52px;
+}
+.stars-big {
+  display: flex;
+  gap: 2px;
+  font-size: 26px;
+}
+.stars-big .star {
+  color: rgba(255, 255, 255, 0.15);
+  text-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+  display: inline-block;
+}
+.stars-big .star.lit {
+  color: #ffd24a;
+  text-shadow: 0 2px 0 #8a5208, 0 0 12px rgba(255, 200, 60, 0.7);
+}
+.stars-big .star.new {
+  animation: star-in 0.7s var(--spring);
+}
+@keyframes star-in {
+  0% {
+    transform: scale(3) rotate(-40deg);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(0.9) rotate(8deg);
+    opacity: 1;
+  }
+}
+.loot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.loot-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.loot-item .res-icon {
+  font-size: 17px;
+}
+
+.battle-actions {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  animation: rise-small 0.4s var(--spring) both;
+}
+
+.army {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: rgba(20, 16, 12, 0.72);
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  pointer-events: auto;
+  min-height: 74px;
+  align-items: center;
+}
+.army-empty {
+  padding: 0 16px;
+}
+.troop {
+  flex-direction: column;
+  gap: 1px;
+  width: 92px;
+  padding: 6px 4px;
+  background: linear-gradient(#5a4c3e, #3a3029);
+  position: relative;
+  animation: card-in 0.4s var(--spring) both;
+  animation-delay: calc(var(--i, 0) * 50ms);
+}
+.troop.active {
+  background: linear-gradient(#ffd66b, #e3992a);
+  color: #2a1d08;
+  transform: translateY(-6px);
+  box-shadow: 0 8px 0 rgba(0, 0, 0, 0.4), 0 0 16px rgba(255, 210, 80, 0.7);
+}
+.troop-icon {
+  font-size: 22px;
+}
+.troop-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+.troop-level {
+  font-size: 10px;
+  color: #ffd24a;
+}
+.troop.active .troop-level {
+  color: #8a5208;
+}
+.troop-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background: #d8432b;
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 6px;
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.4);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 8, 6, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  animation: fade-in 0.4s ease both;
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+.result {
+  width: min(420px, calc(100% - 32px));
+  padding: 22px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  animation: result-in 0.6s var(--spring) both;
+}
+@keyframes result-in {
+  from {
+    transform: scale(0.7) translateY(30px);
+    opacity: 0;
+  }
+}
+.result h2 {
+  font-size: 28px;
+  color: #ffd764;
+  text-shadow: 0 3px 0 #8a4b00;
+}
+.result .stars-big {
+  font-size: 48px;
+}
+.result .stars-big .star.lit {
+  animation: star-in 0.7s var(--spring) both;
+}
+.result .stars-big .star:nth-child(2) {
+  animation-delay: 0.25s;
+}
+.result .stars-big .star:nth-child(3) {
+  animation-delay: 0.5s;
+}
+.result-destruction {
+  font-weight: 700;
+}
+.result-loot {
+  display: flex;
+  gap: 16px;
+  font-size: 18px;
+  font-weight: 800;
+}

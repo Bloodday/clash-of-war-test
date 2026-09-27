@@ -7,6 +7,8 @@ import { TopBar } from './TopBar';
 import { BuildMenu } from './BuildMenu';
 import { BuildingPanel } from './BuildingPanel';
 import { VillagersPanel } from './VillagersPanel';
+import { BattleHud } from './BattleHud';
+import { availableArmy } from '@cow/shared';
 import { QUALITY_LABELS, type Quality } from '../render/postfx';
 
 const SPEEDS = [1, 5, 20];
@@ -17,6 +19,8 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
   const [buildOpen, setBuildOpen] = useState(false);
   const [villagersOpen, setVillagersOpen] = useState(false);
   const state = game.state;
+  if (ui.battle) return <BattleHud battle={ui.battle} ui={ui} />;
+  const army = availableArmy(state).length;
   const selected = ui.selectedId !== null ? state.buildings.find((b) => b.id === ui.selectedId) : undefined;
   const mode = ui.mode;
 
@@ -87,6 +91,18 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
         <div class="bottom-buttons">
           <button class="big" onClick={() => setVillagersOpen(!villagersOpen)}>
             👥 Aldeanos
+          </button>
+          <button
+            class="big attack"
+            disabled={army === 0}
+            title={army === 0 ? 'Entrena soldados (cuartel, campo de tiro o templo) para atacar' : `${army} soldados listos`}
+            onClick={() => {
+              setBuildOpen(false);
+              setVillagersOpen(false);
+              ui.startBattle();
+            }}
+          >
+            ⚔️ Atacar
           </button>
           <button
             class="big primary"
