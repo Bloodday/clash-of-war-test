@@ -39,6 +39,10 @@ export class UiStore {
   /** true mientras el jugador no elija calidad: el juego la ajusta según los FPS. */
   qualityAuto = this.stored === null;
   onQualityChange: (q: Quality) => void = () => {};
+  /** Recolecta un productor con su animación (lo implementa el mundo 3D). */
+  collect: (buildingId: number) => void = () => {};
+  /** Herramienta de pruebas: daña edificios al azar para ver las reparaciones. */
+  simulateAttack: () => void = () => {};
   private nextToast = 1;
   private listeners = new Set<() => void>();
 

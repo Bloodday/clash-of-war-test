@@ -316,6 +316,86 @@ export class Particles {
     });
   }
 
+  /** Humo oscuro de un edificio dañado. */
+  darkSmoke(at: THREE.Vector3, scale = 1): void {
+    this.soft.emit({
+      count: 1,
+      at,
+      spread: 0.3 * scale,
+      velocity: new THREE.Vector3(0.2, 1.0, 0.05),
+      jitter: 0.12,
+      life: [1.8, 2.6],
+      size: [0.4 * scale, 1.5 * scale],
+      color: ['#4a4541', '#2f2b28'],
+      endColor: '#6d6a67',
+      alpha: 0.6,
+      drag: 0.3,
+      spin: 0.5,
+    });
+  }
+
+  /** Llamas de un edificio muy dañado. */
+  fire(at: THREE.Vector3, scale = 1): void {
+    this.glow.emit({
+      count: 2,
+      at,
+      spread: 0.35 * scale,
+      velocity: new THREE.Vector3(0, 1.2, 0),
+      jitter: 0.25,
+      life: [0.35, 0.7],
+      size: [0.45 * scale, 0.05],
+      color: ['#ffb238', '#ff6a1f'],
+      endColor: '#b3200c',
+    });
+  }
+
+  /** Impacto de un proyectil: fogonazo, humo y escombros. */
+  explosion(at: THREE.Vector3, scale = 1): void {
+    this.glow.emit({
+      count: 30,
+      at,
+      spread: 0.2 * scale,
+      jitter: 3.2 * scale,
+      velocity: new THREE.Vector3(0, 1.5, 0),
+      life: [0.25, 0.5],
+      size: [0.6 * scale, 0.05],
+      color: ['#fff0a0', '#ff9a2e'],
+      endColor: '#c2300f',
+      drag: 3,
+    });
+    this.soft.emit({
+      count: 18,
+      at,
+      spread: 0.4 * scale,
+      radial: 2.2,
+      velocity: new THREE.Vector3(0, 1.4, 0),
+      jitter: 0.6,
+      life: [0.9, 1.6],
+      size: [0.6 * scale, 1.8 * scale],
+      color: ['#5b534c', '#8a8178'],
+      alpha: 0.8,
+      drag: 2,
+      spin: 1,
+    });
+    this.soft.emit({ count: 12, at, spread: 0.2, velocity: new THREE.Vector3(0, 3, 0), jitter: 2.2, life: [0.6, 1], size: [0.12, 0.1], color: '#7a6a58', gravity: 9, spin: 8 });
+  }
+
+  /** Brillo al recolectar recursos. */
+  collect(at: THREE.Vector3, tint: ColorLike): void {
+    this.glow.emit({
+      count: 22,
+      at,
+      spread: new THREE.Vector3(0.5, 0.3, 0.5),
+      velocity: new THREE.Vector3(0, 2.4, 0),
+      jitter: 1.2,
+      life: [0.5, 0.9],
+      size: [0.3, 0.02],
+      color: [tint, '#ffffff'],
+      gravity: 3,
+      spin: 4,
+    });
+  }
+
   glint(at: THREE.Vector3, spread: number): void {
     this.glow.emit({
       count: 1,

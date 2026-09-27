@@ -3,19 +3,23 @@ import { MapControls } from 'three/addons/controls/MapControls.js';
 import {
   BUILDING_DEFS,
   GRID_SIZE,
-  RESOURCES,
   TICK_RATE,
+  applyDamage,
+  collectableAmount,
   getBuildingProduction,
   getTrainees,
-  getWorkers,
   isAreaFree,
+  isDamaged,
   isOperational,
+  maxHp,
+  producedResource,
+  producerCapacity,
   type Building,
   type BuildingType,
 } from '@cow/shared';
 import type { GameController } from '../game/GameController';
 import type { UiStore } from '../ui/UiStore';
-import { ERROR_MESSAGES, RESOURCE_ICONS, fmtNum } from '../ui/format';
+import { ERROR_MESSAGES, RESOURCE_ICONS, fmtNum, participle } from '../ui/format';
 import type { Assets } from './assets';
 import {
   createBuildingVisual,
@@ -29,7 +33,7 @@ import {
 import { cellToWorld, worldToCell } from './coords';
 import { Environment } from './environment';
 import { clamp01, ease, hopScale, popScale } from './fx';
-import { Overlays, type OverlayItem } from './overlays';
+import { Overlays, type Bubble, type OverlayItem } from './overlays';
 import { Particles } from './particles';
 import { PostFX, type Quality } from './postfx';
 import { VillagerAgents } from './villagers';
@@ -39,11 +43,11 @@ interface BuildingView {
   visual: BuildingVisual;
   anim: { kind: 'pop' | 'hop'; t: number; duration: number } | null;
   smokeClock: number;
-  produced: Record<string, number>;
-  popupClock: number;
+  fxClock: number;
 }
 
 interface Snapshot {
+  hp: number;
   level: number;
   building: boolean;
   x: number;
@@ -53,7 +57,9 @@ interface Snapshot {
 
 const CLICK_TOLERANCE_PX = 6;
 const HOME_CAMERA = new THREE.Vector3(0, 15.5, 14.5);
-const POPUP_EVERY = 6;
+/** Acumulado mínimo para mostrar la burbuja de recolección. */
+const BUBBLE_MIN = 10;
+const RESOURCE_TINT = { gold: '#ffd84a', wood: '#d9a066', food: '#c8f06a' } as const;
 
 export class World {
   renderer!: THREE.WebGPURenderer;
@@ -79,6 +85,9 @@ export class World {
   private elapsed = 0;
   private intro = { t: 0, duration: 3.2, from: new THREE.Vector3(-38, 58, 70) };
   private firstSync = true;
+  private lastFullWarning = 0;
+  private lastHoverCheck = 0;
+  private shake = 0;
   private perf = { time: 0, frames: 0 };
 
   constructor(
@@ -166,7 +175,16 @@ export class World {
     this.particles.update(dt);
     this.updateCamera(dt);
     this.env.update(dt, this.controls.target);
+    // Sacudida de cámara: desplazamiento temporal solo durante el render.
+    const offset = new THREE.Vector3();
+    if (this.shake > 0) {
+      this.shake = Math.max(0, this.shake - dt);
+      const k = this.shake * this.shake * 0.35;
+      offset.set((Math.random() - 0.5) * k, (Math.random() - 0.5) * k, 0);
+    }
+    this.camera.position.add(offset);
     this.post.render();
+    this.camera.position.sub(offset);
     this.updateOverlays(dt);
     this.autoQuality(dtMs);
   }
@@ -187,6 +205,12 @@ export class World {
   }
 
   private updateCamera(dt: number): void {
+    if (this.intro.t >= this.intro.duration && !this.controls.enabled) {
+      // Intro saltada o terminada entre frames: dejar la cámara en su sitio.
+      this.camera.position.copy(HOME_CAMERA);
+      this.camera.lookAt(0, 0, 0);
+      this.controls.enabled = true;
+    }
     if (this.intro.t < this.intro.duration) {
       this.intro.t += dt;
       const k = ease.inOutCubic(clamp01(this.intro.t / this.intro.duration));
@@ -244,7 +268,7 @@ export class World {
         if (walls.has(`${b.x},${b.y + 1}`)) mask |= 4;
         if (walls.has(`${b.x},${b.y - 1}`)) mask |= 8;
       }
-      const key = `${b.type}:${b.level}:${b.construction ? 'c' : ''}:${stage}:${mask}`;
+      const key = `${b.type}:${b.level}:${b.construction ? 'c' : ''}:${stage}:${mask}:${b.hp <= 0 ? 'x' : ''}`;
       let view = this.views.get(b.id);
       if (!view || view.key !== key) {
         if (view) {
@@ -257,8 +281,7 @@ export class World {
           visual,
           anim: view ? view.anim : null,
           smokeClock: Math.random(),
-          produced: view?.produced ?? {},
-          popupClock: view?.popupClock ?? Math.random() * POPUP_EVERY,
+          fxClock: Math.random(),
         };
         this.views.set(b.id, fresh);
         this.buildingsRoot.add(visual.root);
@@ -282,7 +305,7 @@ export class World {
   /** Compara con el frame anterior para disparar animaciones y efectos. */
   private detectEvents(b: Building, view: BuildingView, stage: number): void {
     const prev = this.snapshots.get(b.id);
-    const snap: Snapshot = { level: b.level, building: b.construction !== null, x: b.x, y: b.y, stage };
+    const snap: Snapshot = { hp: b.hp, level: b.level, building: b.construction !== null, x: b.x, y: b.y, stage };
     this.snapshots.set(b.id, snap);
     if (this.firstSync) return;
     const size = BUILDING_DEFS[b.type].size;
@@ -308,24 +331,34 @@ export class World {
       const name = BUILDING_DEFS[b.type].name;
       this.overlays.floatText(
         center.clone().setY(view.visual.height + 0.5),
-        b.level === 1 ? `¡${name} construido!` : `¡${name} nivel ${b.level}!`,
+        b.level === 1 ? `¡${name} ${participle(b.type, 'construid')}!` : `¡${name} nivel ${b.level}!`,
         'big',
       );
     } else if (!prev.building && snap.building) {
       view.anim = { kind: 'hop', t: 0, duration: 0.5 };
       this.particles.dust(center.clone().setY(0.1), size * 0.5, 16);
     }
+    const max = maxHp(b);
+    if (prev.hp > 0 && snap.hp <= 0) {
+      this.particles.explosion(center.clone().setY(0.6), size * 0.5);
+      this.overlays.floatText(center.clone().setY(1.5), `¡${BUILDING_DEFS[b.type].name} ${participle(b.type, 'destruid')}!`, 'bad');
+    } else if (prev.hp < max && snap.hp >= max && prev.level === snap.level && !snap.building) {
+      pop(0.7);
+      this.particles.celebrate(center.clone().setY(view.visual.height * 0.5), size * 0.4);
+      this.overlays.floatText(center.clone().setY(view.visual.height + 0.4), '¡Reparado!', 'good');
+    }
   }
 
   private animateBuildings(dt: number): void {
     const state = this.game.state;
-    const simDt = dt * this.game.speed;
     for (const b of state.buildings) {
       const view = this.views.get(b.id);
       if (!view) continue;
       const v = view.visual;
-      const working = isOperational(b) && (getWorkers(state, b.id).length > 0 || getTrainees(state, b.id).length > 0);
+      const producing = Object.keys(getBuildingProduction(b)).length > 0;
+      const working = isOperational(b) && (producing || getTrainees(state, b.id).length > 0);
       v.update(dt, working);
+      if (producedResource(b.type)) v.setFill(b.stored / Math.max(1, producerCapacity(b)));
 
       if (view.anim) {
         view.anim.t += dt / view.anim.duration;
@@ -349,21 +382,58 @@ export class World {
         this.particles.glint(v.root.position.clone().setY(0.8), 1.1);
       }
 
-      // Popups de producción: "+12 🌾" cada pocos segundos.
-      const prod = getBuildingProduction(state, b);
-      for (const r of RESOURCES) if (prod[r]) view.produced[r] = (view.produced[r] ?? 0) + prod[r]! * simDt;
-      view.popupClock -= dt;
-      if (view.popupClock <= 0) {
-        view.popupClock = POPUP_EVERY;
-        for (const r of RESOURCES) {
-          const amount = Math.floor(view.produced[r] ?? 0);
-          if (amount >= 1) {
-            view.produced[r]! -= amount;
-            this.overlays.floatText(v.root.position.clone().setY(v.height + 0.3), `+${fmtNum(amount)} ${RESOURCE_ICONS[r]}`, r);
-          }
+      // Daños: humo negro y, si es grave, llamas.
+      if (isDamaged(b) && !b.construction) {
+        const ratio = b.hp / maxHp(b);
+        view.fxClock -= dt;
+        if (view.fxClock <= 0) {
+          const size = BUILDING_DEFS[b.type].size;
+          view.fxClock = 0.18 + ratio * 0.35;
+          const top = v.root.position.clone().setY(Math.max(0.5, v.height * 0.7));
+          if (ratio < 0.75) this.particles.darkSmoke(top, 0.5 + size * 0.2);
+          if (ratio < 0.4 && b.hp > 0) this.particles.fire(top.setY(top.y * 0.6), 0.4 + size * 0.15);
         }
       }
     }
+  }
+
+  /** Recolecta un productor: iconos volando al HUD, destellos y texto. */
+  collect(buildingId: number): void {
+    const b = this.game.state.buildings.find((x) => x.id === buildingId);
+    const r = b && producedResource(b.type);
+    const view = b && this.views.get(b.id);
+    if (!b || !r || !view || b.stored < 1) return;
+    const amount = collectableAmount(this.game.state, b);
+    const res = this.game.dispatch({ type: 'collect', buildingId });
+    const top = view.visual.root.position.clone().setY(view.visual.height + 0.4);
+    if (!res.ok) {
+      if (res.error === 'storageFull' && performance.now() - this.lastFullWarning > 2500) {
+        this.lastFullWarning = performance.now();
+        this.overlays.floatText(top, 'Almacén lleno', 'bad');
+        this.ui.toast(ERROR_MESSAGES.storageFull, 'error');
+      }
+      return;
+    }
+    view.anim = { kind: 'hop', t: 0, duration: 0.4 };
+    this.particles.collect(view.visual.root.position.clone().setY(view.visual.height * 0.6), RESOURCE_TINT[r]);
+    this.overlays.floatText(top, `+${fmtNum(amount)} ${RESOURCE_ICONS[r]}`, r);
+    const count = Math.min(12, 3 + Math.floor(Math.sqrt(amount) / 2));
+    this.overlays.flyToHud(top, RESOURCE_ICONS[r], document.querySelector(`[data-res="${r}"] .res-icon`), count);
+  }
+
+  /** Herramienta de pruebas: daña edificios al azar (hasta que existan las batallas). */
+  simulateAttack(): void {
+    const targets = this.game.state.buildings.filter((b) => b.level > 0 && !b.construction && b.hp > 0);
+    const n = Math.min(targets.length, 3 + Math.floor(Math.random() * 3));
+    for (let i = 0; i < n; i++) {
+      const b = targets.splice(Math.floor(Math.random() * targets.length), 1)[0]!;
+      applyDamage(this.game.state, b.id, maxHp(b) * (0.35 + Math.random() * 0.8));
+      const view = this.views.get(b.id);
+      if (view) {
+        setTimeout(() => this.particles.explosion(view.visual.root.position.clone().setY(0.8), 0.6 + BUILDING_DEFS[b.type].size * 0.2), i * 180);
+      }
+    }
+    this.shake = 0.6;
   }
 
   private syncSelection(dt: number): void {
@@ -454,6 +524,16 @@ export class World {
           kind: 'build',
         });
       }
+      if (isDamaged(b) && !b.construction) {
+        items.push({
+          key: `h${b.id}`,
+          pos: top,
+          label: b.hp <= 0 ? 'Destruido' : `${Math.round((b.hp / maxHp(b)) * 100)}%`,
+          seconds: 0,
+          progress: b.hp / maxHp(b),
+          kind: 'hp',
+        });
+      }
       getTrainees(state, b.id).forEach((v, i) => {
         if (v.task.kind !== 'train') return;
         items.push({
@@ -467,6 +547,21 @@ export class World {
       });
     }
     this.overlays.update(items, dt);
+
+    const bubbles: Bubble[] = [];
+    for (const b of state.buildings) {
+      const r = producedResource(b.type);
+      const view = this.views.get(b.id);
+      if (!r || !view || b.stored < BUBBLE_MIN || b.construction) continue;
+      bubbles.push({
+        key: `b${b.id}`,
+        pos: view.visual.root.position.clone().setY(view.visual.height + (isDamaged(b) ? 1.7 : 0.9)),
+        icon: RESOURCE_ICONS[r],
+        full: b.stored >= producerCapacity(b),
+        onHover: () => this.collect(b.id),
+      });
+    }
+    this.overlays.setBubbles(bubbles);
   }
 
   // ---------------------------------------------------------------------------
@@ -476,7 +571,10 @@ export class World {
   private bindInput(): void {
     const el = this.renderer.domElement;
     el.addEventListener('contextmenu', (e) => e.preventDefault());
-    el.addEventListener('pointermove', (e) => this.setPointer(e));
+    el.addEventListener('pointermove', (e) => {
+      this.setPointer(e);
+      this.hoverCollect();
+    });
     el.addEventListener('pointerleave', () => (this.pointerInside = false));
     el.addEventListener('pointerdown', (e) => {
       this.setPointer(e);
@@ -494,6 +592,17 @@ export class World {
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') this.cancel();
     });
+  }
+
+  /** Pasar el ratón sobre un productor con recursos los recolecta (como en los juegos móviles). */
+  private hoverCollect(): void {
+    if (this.ui.mode.kind !== 'idle' || this.down) return;
+    const now = performance.now();
+    if (now - this.lastHoverCheck < 60) return;
+    this.lastHoverCheck = now;
+    const id = this.pickBuilding(false);
+    const b = id !== null ? this.game.state.buildings.find((x) => x.id === id) : undefined;
+    if (b && producedResource(b.type) && b.stored >= BUBBLE_MIN && !b.construction) this.collect(b.id);
   }
 
   private cancel(): void {
@@ -515,7 +624,7 @@ export class World {
     return worldToCell(hit.x, hit.z, BUILDING_DEFS[type].size);
   }
 
-  private pickBuilding(): number | null {
+  private pickBuilding(useFootprint = true): number | null {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObjects(this.buildingsRoot.children, true);
     for (const h of hits) {
@@ -523,6 +632,7 @@ export class World {
       while (o && o.userData.buildingId === undefined) o = o.parent;
       if (o) return o.userData.buildingId as number;
     }
+    if (!useFootprint) return null;
     // Si no se tocó ningún modelo, se prueba con la huella en el suelo.
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(this.groundPlane, hit)) return null;

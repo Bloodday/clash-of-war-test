@@ -9,14 +9,16 @@ import {
   getTownHallLevel,
   getTrainees,
   getVillager,
-  getWorkers,
+  collectableAmount,
   isAreaFree,
+  isDamaged,
   isOperational,
   maxBuildings,
+  producedResource,
   nextRoleLevel,
   roleMaxLevel,
 } from './queries';
-import { allocId, createVillager, type Building, type GameState } from './state';
+import { allocId, createVillager, maxHp, type Building, type GameState } from './state';
 
 // Toda modificación del estado pasa por un comando. Son objetos planos y
 // serializables: hoy los ejecuta el cliente, mañana se enviarán al servidor
@@ -26,8 +28,7 @@ export type Command =
   | { type: 'placeBuilding'; building: BuildingType; x: number; y: number }
   | { type: 'moveBuilding'; buildingId: number; x: number; y: number }
   | { type: 'upgradeBuilding'; buildingId: number }
-  | { type: 'assignWorker'; villagerId: number; buildingId: number }
-  | { type: 'unassignWorker'; villagerId: number }
+  | { type: 'collect'; buildingId: number }
   | { type: 'trainVillager'; villagerId: number; buildingId: number }
   | { type: 'recruitVillager' };
 
@@ -42,9 +43,11 @@ export type CommandError =
   | 'noIdleBuilder'
   | 'busy'
   | 'maxLevel'
-  | 'notWorkplace'
   | 'noFreeSlot'
-  | 'notCivilian'
+  | 'damaged'
+  | 'notProducer'
+  | 'nothingToCollect'
+  | 'storageFull'
   | 'notTrainingBuilding'
   | 'buildingLevelTooLow'
   | 'noHousing';
@@ -66,6 +69,7 @@ function startConstruction(state: GameState, b: Building, targetLevel: number): 
   const ticks = secondsToTicks(levelDef.buildSeconds);
   if (ticks === 0) {
     b.level = targetLevel;
+    b.hp = maxHp(b);
     return OK;
   }
   const builder = getIdleCivilians(state)[0];
@@ -88,7 +92,16 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       if (!isAreaFree(state, cmd.x, cmd.y, def.size)) return fail('areaBlocked');
       if (first.buildSeconds > 0 && getIdleCivilians(state).length === 0) return fail('noIdleBuilder');
 
-      const b: Building = { id: allocId(state), type: cmd.building, x: cmd.x, y: cmd.y, level: 0, construction: null };
+      const b: Building = {
+        id: allocId(state),
+        type: cmd.building,
+        x: cmd.x,
+        y: cmd.y,
+        level: 0,
+        construction: null,
+        hp: first.hp,
+        stored: 0,
+      };
       state.buildings.push(b);
       pay(state, first.cost);
       return startConstruction(state, b, 1);
@@ -107,6 +120,7 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       const b = getBuilding(state, cmd.buildingId);
       if (!b) return fail('unknownBuilding');
       if (b.construction || getTrainees(state, b.id).length > 0) return fail('busy');
+      if (isDamaged(b)) return fail('damaged');
       const def = BUILDING_DEFS[b.type];
       const next = def.levels[b.level];
       if (!next) return fail('maxLevel');
@@ -118,26 +132,16 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       return startConstruction(state, b, b.level + 1);
     }
 
-    case 'assignWorker': {
-      const v = getVillager(state, cmd.villagerId);
-      if (!v) return fail('unknownVillager');
+    case 'collect': {
       const b = getBuilding(state, cmd.buildingId);
       if (!b) return fail('unknownBuilding');
-      if (v.role !== null) return fail('notCivilian');
-      if (v.task.kind === 'work' && v.task.buildingId === b.id) return OK;
-      if (v.task.kind !== 'idle' && v.task.kind !== 'work') return fail('busy');
-      const slots = currentLevelDef(b)?.workerSlots;
-      if (!slots) return fail('notWorkplace');
-      if (getWorkers(state, b.id).length >= slots) return fail('noFreeSlot');
-      v.task = { kind: 'work', buildingId: b.id };
-      return OK;
-    }
-
-    case 'unassignWorker': {
-      const v = getVillager(state, cmd.villagerId);
-      if (!v) return fail('unknownVillager');
-      if (v.task.kind !== 'work') return fail('busy');
-      v.task = { kind: 'idle' };
+      const r = producedResource(b.type);
+      if (!r) return fail('notProducer');
+      if (b.stored < 1) return fail('nothingToCollect');
+      const amount = collectableAmount(state, b);
+      if (amount < 1) return fail('storageFull');
+      b.stored -= amount;
+      state.resources[r] += amount;
       return OK;
     }
 
@@ -150,7 +154,7 @@ export function executeCommand(state: GameState, cmd: Command): CommandResult {
       const role = def.trainsRole;
       if (!role) return fail('notTrainingBuilding');
       if (!isOperational(b)) return fail('busy');
-      if (v.task.kind !== 'idle' && v.task.kind !== 'work') return fail('busy');
+      if (v.task.kind !== 'idle') return fail('busy');
       const target = nextRoleLevel(v, role);
       if (target > roleMaxLevel(role)) return fail('maxLevel');
       if (b.level < target) return fail('buildingLevelTooLow');

@@ -72,6 +72,11 @@ export const ROLE_DEFS: Record<RoleId, RoleDef> = {
 
 export const RECRUIT_COST: Cost = { food: 60 };
 
+/** Fracción de la vida máxima que repara un aldeano por segundo. */
+export const REPAIR_RATE = 0.05;
+/** Mínimo de vida reparada por segundo (para edificios con poca vida). */
+export const REPAIR_MIN_HP_PER_SECOND = 15;
+
 // ---------------------------------------------------------------------------
 // Edificios
 // ---------------------------------------------------------------------------
@@ -98,8 +103,8 @@ export interface BuildingLevelDef {
   requiresTownHall: number;
   housing?: number;
   storage?: Cost;
-  workerSlots?: number;
-  productionPerWorker?: Cost; // por segundo
+  production?: Cost; // por segundo, hacia el depósito propio del edificio
+  capacity?: number; // máximo acumulable antes de tener que recolectar
   trainingSlots?: number;
   damage?: number;
   range?: number;
@@ -150,40 +155,40 @@ export const BUILDING_DEFS: Record<BuildingType, BuildingDef> = {
   farm: {
     type: 'farm',
     name: 'Granja',
-    description: 'Los aldeanos asignados producen comida.',
+    description: 'Produce comida por sí sola. Pasa el ratón por encima para recolectarla.',
     category: 'economy',
     size: 3,
     maxCountByTownHall: [1, 2, 2, 3, 3],
     levels: [
-      { cost: { wood: 80 }, buildSeconds: 10, hp: 400, requiresTownHall: 1, workerSlots: 2, productionPerWorker: { food: 0.5 } },
-      { cost: { wood: 250, gold: 150 }, buildSeconds: 45, hp: 550, requiresTownHall: 2, workerSlots: 3, productionPerWorker: { food: 0.75 } },
-      { cost: { wood: 700, gold: 400 }, buildSeconds: 120, hp: 700, requiresTownHall: 3, workerSlots: 4, productionPerWorker: { food: 1 } },
+      { cost: { wood: 80 }, buildSeconds: 10, hp: 400, requiresTownHall: 1, production: { food: 0.8 }, capacity: 400 },
+      { cost: { wood: 250, gold: 150 }, buildSeconds: 45, hp: 550, requiresTownHall: 2, production: { food: 1.3 }, capacity: 1000 },
+      { cost: { wood: 700, gold: 400 }, buildSeconds: 120, hp: 700, requiresTownHall: 3, production: { food: 2 }, capacity: 2200 },
     ],
   },
   lumberCamp: {
     type: 'lumberCamp',
     name: 'Aserradero',
-    description: 'Los aldeanos asignados talan y producen madera.',
+    description: 'Produce madera por sí solo. Pasa el ratón por encima para recolectarla.',
     category: 'economy',
     size: 3,
     maxCountByTownHall: [1, 2, 2, 3, 3],
     levels: [
-      { cost: { gold: 80 }, buildSeconds: 10, hp: 400, requiresTownHall: 1, workerSlots: 2, productionPerWorker: { wood: 0.5 } },
-      { cost: { gold: 250, wood: 150 }, buildSeconds: 45, hp: 550, requiresTownHall: 2, workerSlots: 3, productionPerWorker: { wood: 0.75 } },
-      { cost: { gold: 700, wood: 400 }, buildSeconds: 120, hp: 700, requiresTownHall: 3, workerSlots: 4, productionPerWorker: { wood: 1 } },
+      { cost: { gold: 80 }, buildSeconds: 10, hp: 400, requiresTownHall: 1, production: { wood: 0.8 }, capacity: 400 },
+      { cost: { gold: 250, wood: 150 }, buildSeconds: 45, hp: 550, requiresTownHall: 2, production: { wood: 1.3 }, capacity: 1000 },
+      { cost: { gold: 700, wood: 400 }, buildSeconds: 120, hp: 700, requiresTownHall: 3, production: { wood: 2 }, capacity: 2200 },
     ],
   },
   goldMine: {
     type: 'goldMine',
     name: 'Mina de oro',
-    description: 'Los aldeanos asignados extraen oro.',
+    description: 'Extrae oro por sí sola. Pasa el ratón por encima para recolectarlo.',
     category: 'economy',
     size: 3,
     maxCountByTownHall: [1, 2, 2, 3, 3],
     levels: [
-      { cost: { wood: 120 }, buildSeconds: 15, hp: 450, requiresTownHall: 1, workerSlots: 2, productionPerWorker: { gold: 0.4 } },
-      { cost: { wood: 300, gold: 150 }, buildSeconds: 60, hp: 600, requiresTownHall: 2, workerSlots: 3, productionPerWorker: { gold: 0.6 } },
-      { cost: { wood: 800, gold: 400 }, buildSeconds: 150, hp: 750, requiresTownHall: 3, workerSlots: 4, productionPerWorker: { gold: 0.85 } },
+      { cost: { wood: 120 }, buildSeconds: 15, hp: 450, requiresTownHall: 1, production: { gold: 0.6 }, capacity: 300 },
+      { cost: { wood: 300, gold: 150 }, buildSeconds: 60, hp: 600, requiresTownHall: 2, production: { gold: 1 }, capacity: 800 },
+      { cost: { wood: 800, gold: 400 }, buildSeconds: 150, hp: 750, requiresTownHall: 3, production: { gold: 1.6 }, capacity: 1800 },
     ],
   },
   storehouse: {

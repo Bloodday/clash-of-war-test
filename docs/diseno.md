@@ -9,16 +9,25 @@ Constructor de aldeas asíncrono (estilo Clash of Clans) cuyo ejército está fo
 ### 1. Aldeanos y roles
 
 - Todo habitante es un aldeano. Los aldeanos se reclutan en el ayuntamiento (cuesta comida) y necesitan alojamiento (ayuntamiento + casas).
-- Un aldeano **civil** puede trabajar (granja, aserradero, mina) o construir. Cada obra ocupa a un aldeano libre como constructor mientras dura.
+- Los aldeanos **civiles son los constructores** de la aldea: cada obra (nueva o mejora) ocupa a uno mientras dura, y **reparan solos** los edificios dañados (uno por edificio, primero los más dañados). El contador 🔨 de la barra superior muestra los constructores libres.
 - Un edificio de entrenamiento enseña un rol: **Cuartel → Guerrero**, **Campo de tiro → Arquero**, **Templo → Sanador**. El nivel del edificio limita el nivel máximo del rol que puede enseñar.
-- Un aldeano con rol es un **soldado**: ya no trabaja ni construye. Esta es la tensión central de la economía: cada soldado es un trabajador menos.
+- Un aldeano con rol es un **soldado**: ya no construye ni repara. Esta es la tensión central: cada soldado es un constructor menos.
 - Reentrenar a un soldado en otro rol lo reinicia a nivel 1.
 
-### 2. Economía
+### 2. Economía (como en Clash of Clans)
 
-- Recursos: oro, madera y comida. La producción es por trabajador asignado; los edificios en mejora no producen.
-- La capacidad de almacenamiento la dan el ayuntamiento y los almacenes.
+- Recursos: oro, madera y comida.
+- **Granja, aserradero y mina producen solos** hacia su propio depósito, hasta una capacidad por nivel. Lleno, dejan de producir.
+- Cuando hay algo acumulado aparece una **burbuja** sobre el edificio: **pasar el ratón** por encima (o tocarla) lo recolecta; los iconos vuelan hasta el contador. También hay un botón *Recolectar* en el panel del edificio.
+- Lo recolectado va a los almacenes (ayuntamiento + almacenes). Si están llenos, solo se recoge lo que cabe y el resto se queda en el productor.
+- Los edificios en mejora o destruidos no producen.
 - El nivel del ayuntamiento limita cuántos edificios de cada tipo puedes tener y a qué nivel mejorarlos.
+
+### 2b. Daño y reparación
+
+- Cada edificio tiene vida. A 0 queda **destruido** (escombros) y deja de funcionar.
+- Los aldeanos civiles libres acuden solos a repararlo (≈5 % de la vida por segundo). Un edificio dañado no se puede mejorar.
+- Las batallas (fase 2) usarán `applyDamage` de la simulación; mientras tanto, el botón **💥 Simular ataque** daña edificios al azar para probarlo.
 
 ### 3. Batallas (fases 2 y 3)
 

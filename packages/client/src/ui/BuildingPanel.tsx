@@ -9,11 +9,14 @@ import {
   currentLevelDef,
   getBuildingProduction,
   getHousing,
-  getIdleCivilians,
+  getRepairers,
   getTownHallLevel,
   getTrainees,
-  getWorkers,
+  isDamaged,
+  maxHp,
   nextRoleLevel,
+  producedResource,
+  producerCapacity,
   roleMaxLevel,
   type Building,
   type Command,
@@ -23,7 +26,7 @@ import {
 import type { GameController } from '../game/GameController';
 import type { UiStore } from './UiStore';
 import { CostView, Progress } from './components';
-import { ERROR_MESSAGES, RESOURCE_ICONS, fmtNum, fmtTime, roleLabel } from './format';
+import { ERROR_MESSAGES, RESOURCE_ICONS, fmtNum, fmtTime, participle, roleLabel } from './format';
 
 interface Props {
   game: GameController;
@@ -71,9 +74,11 @@ export function BuildingPanel({ game, ui, building: b }: Props) {
         </section>
       )}
 
-      {cur && <Stats state={state} building={b} />}
+      {isDamaged(b) && !b.construction && <Health state={state} building={b} />}
 
-      {cur?.workerSlots && <Workers state={state} building={b} run={run} />}
+      {cur && <Stats building={b} />}
+
+      {cur?.production && <Production ui={ui} building={b} />}
 
       {def.trainsRole && b.level > 0 && <Training state={state} building={b} run={run} />}
 
@@ -95,7 +100,7 @@ export function BuildingPanel({ game, ui, building: b }: Props) {
         {b.level === 0 ? null : next ? (
           <button
             class="primary"
-            disabled={b.construction !== null || getTownHallLevel(state) < next.requiresTownHall}
+            disabled={b.construction !== null || isDamaged(b) || getTownHallLevel(state) < next.requiresTownHall}
             onClick={() => run({ type: 'upgradeBuilding', buildingId: b.id }, `Mejora de ${def.name} iniciada`)}
           >
             <span>
@@ -114,19 +119,11 @@ export function BuildingPanel({ game, ui, building: b }: Props) {
   );
 }
 
-function Stats({ state, building: b }: { state: GameState; building: Building }) {
+function Stats({ building: b }: { building: Building }) {
   const cur = currentLevelDef(b)!;
   const rows: [string, string][] = [['Vida', fmtNum(cur.hp)]];
   if (cur.housing) rows.push(['Alojamiento', `${cur.housing} aldeanos`]);
   if (cur.storage) rows.push(['Almacena', RESOURCES.map((r) => `${RESOURCE_ICONS[r]} ${fmtNum(cur.storage![r] ?? 0)}`).join('  ')]);
-  if (cur.productionPerWorker) {
-    const prod = getBuildingProduction(state, b);
-    const per = RESOURCES.filter((r) => cur.productionPerWorker![r]).map(
-      (r) => `${RESOURCE_ICONS[r]} ${fmtNum((cur.productionPerWorker![r] ?? 0) * 60)}/min por trabajador`,
-    );
-    rows.push(['Rendimiento', per.join(' ')]);
-    rows.push(['Produciendo', RESOURCES.filter((r) => prod[r]).map((r) => `${RESOURCE_ICONS[r]} ${fmtNum(prod[r]! * 60)}/min`).join(' ') || 'nada']);
-  }
   if (cur.trainingSlots) rows.push(['Plazas de entrenamiento', String(cur.trainingSlots)]);
   if (cur.damage) rows.push(['Daño / alcance', `${cur.damage} / ${cur.range}`]);
   return (
@@ -143,38 +140,55 @@ function Stats({ state, building: b }: { state: GameState; building: Building })
   );
 }
 
-type Run = (cmd: Command, okMsg?: string) => void;
-
-function Workers({ state, building: b, run }: { state: GameState; building: Building; run: Run }) {
-  const slots = currentLevelDef(b)?.workerSlots ?? 0;
-  const workers = getWorkers(state, b.id);
-  const idle = getIdleCivilians(state);
+function Health({ state, building: b }: { state: GameState; building: Building }) {
+  const max = maxHp(b);
+  const repairer = getRepairers(state, b.id)[0];
   return (
     <section>
-      <h3>
-        Trabajadores {workers.length}/{slots}
-      </h3>
-      <ul class="list">
-        {workers.map((v) => (
-          <li key={v.id}>
-            <span>{v.name}</span>
-            <button class="small" onClick={() => run({ type: 'unassignWorker', villagerId: v.id })}>
-              Retirar
-            </button>
-          </li>
-        ))}
-      </ul>
-      {workers.length < slots && (
-        <button
-          disabled={idle.length === 0}
-          onClick={() => idle[0] && run({ type: 'assignWorker', villagerId: idle[0].id, buildingId: b.id })}
-        >
-          + Asignar aldeano libre ({idle.length})
-        </button>
-      )}
+      <h3>{b.hp <= 0 ? participle(b.type, 'Destruid') : participle(b.type, 'Dañad')}</h3>
+      <div class="progress hp">
+        <div class="progress-fill" style={{ width: `${(b.hp / max) * 100}%` }} />
+      </div>
+      <small>
+        {fmtNum(b.hp)} / {fmtNum(max)} ·{' '}
+        {repairer ? `Reparando: ${repairer.name} 🔨` : 'Esperando a un aldeano libre para repararlo'}
+      </small>
     </section>
   );
 }
+
+function Production({ ui, building: b }: { ui: UiStore; building: Building }) {
+  const r = producedResource(b.type)!;
+  const cap = producerCapacity(b);
+  const rate = currentLevelDef(b)?.production?.[r] ?? 0;
+  const producing = (getBuildingProduction(b)[r] ?? 0) > 0;
+  const full = b.stored >= cap;
+  return (
+    <section>
+      <h3>Producción</h3>
+      <div class="row">
+        <span>
+          {RESOURCE_ICONS[r]} {fmtNum(rate * 60)}/min · {fmtNum(rate * 3600)}/hora
+        </span>
+        <small class={full ? 'warn' : 'muted'}>{full ? '¡Lleno!' : producing ? 'Produciendo' : 'Detenido'}</small>
+      </div>
+      <div class={full ? 'progress stock full' : 'progress stock'}>
+        <div class="progress-fill" style={{ width: `${Math.min(100, (b.stored / cap) * 100)}%` }} />
+      </div>
+      <div class="row">
+        <small>
+          Acumulado: {fmtNum(b.stored)} / {fmtNum(cap)}
+          {!full && producing ? ` · lleno en ${fmtTime((cap - b.stored) / rate)}` : ''}
+        </small>
+        <button class="small primary" disabled={b.stored < 1} onClick={() => ui.collect(b.id)}>
+          Recolectar
+        </button>
+      </div>
+    </section>
+  );
+}
+
+type Run = (cmd: Command, okMsg?: string) => void;
 
 function Training({ state, building: b, run }: { state: GameState; building: Building; run: Run }) {
   const role = BUILDING_DEFS[b.type].trainsRole!;
@@ -182,11 +196,11 @@ function Training({ state, building: b, run }: { state: GameState; building: Bui
   const slots = currentLevelDef(b)?.trainingSlots ?? 0;
   const trainees = getTrainees(state, b.id);
   // Primero los que se pueden entrenar ya, y entre ellos los libres antes que los que trabajan.
-  const rank = (v: Villager) => (b.level < nextRoleLevel(v, role) ? 2 : 0) + (v.task.kind === 'work' ? 1 : 0);
+  const rank = (v: Villager) => (b.level < nextRoleLevel(v, role) ? 1 : 0);
   const candidates = state.villagers
     .filter(
       (v) =>
-        (v.task.kind === 'idle' || v.task.kind === 'work') &&
+        v.task.kind === 'idle' &&
         (v.role === null || v.role === role) &&
         nextRoleLevel(v, role) <= roleMaxLevel(role),
     )
@@ -222,7 +236,7 @@ function Training({ state, building: b, run }: { state: GameState; building: Bui
             {candidates.map((v) => (
               <option key={v.id} value={v.id}>
                 {v.name} ({roleLabel(v)}
-                {v.task.kind === 'work' ? ', trabajando' : ''}) → {roleDef.name} {nextRoleLevel(v, role)}
+                ) → {roleDef.name} {nextRoleLevel(v, role)}
               </option>
             ))}
           </select>

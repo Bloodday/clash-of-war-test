@@ -61,6 +61,26 @@ try {
     timeout: 120_000,
   });
   console.log('· construcción completada');
+
+  const food = await page.evaluate(() => {
+    const before = window.game.state.resources.food;
+    window.ui.collect(window.game.state.buildings.find((b) => b.type === 'farm').id);
+    return window.game.state.resources.food - before;
+  });
+  if (!(food > 0)) fail('la recolección no sumó comida');
+  console.log(`· recolectado: +${Math.floor(food)} de comida`);
+
+  // Vida completa de cada edificio antes del ataque, para comprobar que se repara todo.
+  await page.evaluate(() => {
+    window.__fullHp = Object.fromEntries(window.game.state.buildings.map((b) => [b.id, b.hp]));
+    window.ui.simulateAttack();
+  });
+  const damaged = await page.evaluate(() => window.game.state.buildings.filter((b) => b.hp < window.__fullHp[b.id]).length);
+  if (damaged === 0) fail('el ataque simulado no dañó nada');
+  await page.waitForFunction(() => window.game.state.buildings.every((b) => b.hp >= window.__fullHp[b.id]), null, {
+    timeout: 180_000,
+  });
+  console.log(`· ataque simulado reparado por los aldeanos (${damaged} edificios afectados)`);
   await page.evaluate(() => (window.game.speed = 1));
 
   await page.waitForFunction(() => window.ui.thumbnails.size > 0, null, { timeout: 180_000 });

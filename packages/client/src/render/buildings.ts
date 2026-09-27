@@ -18,6 +18,8 @@ export interface BuildingVisual {
   smoke: THREE.Vector3[];
   /** Anima las piezas móviles. `active` indica si el edificio está trabajando. */
   update(dt: number, active: boolean): void;
+  /** Productores: refleja lo acumulado (0..1): el trigo crece, las pilas aumentan. */
+  setFill(fraction: number): void;
 }
 
 interface Spec {
@@ -188,6 +190,12 @@ function findFlags(root: THREE.Object3D): THREE.Object3D[] {
 function makeVisual(root: THREE.Group, body: THREE.Group, height: number, smoke: THREE.Vector3[]): BuildingVisual {
   const spinners = findSpinners(body);
   const flags = findFlags(body);
+  const fillers: { obj: THREE.Object3D; min: number; uniform: boolean; base: THREE.Vector3 }[] = [];
+  body.traverse((o) => {
+    const f = o.userData.fill as { min: number; uniform: boolean } | undefined;
+    if (f) fillers.push({ obj: o, ...f, base: o.scale.clone() });
+  });
+  let fill = -1;
   const phase = Math.random() * 10;
   let t = 0;
   return {
@@ -205,6 +213,17 @@ function makeVisual(root: THREE.Group, body: THREE.Group, height: number, smoke:
       flags.forEach((f, i) => {
         f.rotation.y = Math.sin(t * 2.6 + phase + i) * 0.25;
       });
+    },
+    setFill(fraction) {
+      const f = Math.round(Math.min(1, Math.max(0, fraction)) * 50) / 50;
+      if (f === fill) return;
+      fill = f;
+      for (const x of fillers) {
+        const k = x.min + (1 - x.min) * f;
+        x.obj.visible = f > 0.02 || x.min > 0.2;
+        if (x.uniform) x.obj.scale.copy(x.base).multiplyScalar(k);
+        else x.obj.scale.set(x.base.x, x.base.y * k, x.base.z);
+      }
     },
   };
 }
@@ -224,6 +243,16 @@ export function createBuildingVisual(assets: Assets, b: Building, wallMask = 0, 
   if (b.level === 0) {
     const h = buildSite(assets, body, size, constructionStage);
     return makeVisual(root, body, h, []);
+  }
+
+  if (b.hp <= 0) {
+    // Destruido: escombros hasta que lo reparen.
+    body.add(pad(size, PAD_DIRT));
+    const rubble = assets.model('building_destroyed');
+    const h = fit(rubble, size * 0.85);
+    rubble.position.y += 0.08;
+    body.add(rubble);
+    return makeVisual(root, body, Math.max(h, 0.8), []);
   }
 
   let height: number;
@@ -264,6 +293,8 @@ function addProp(assets: Assets, parent: THREE.Object3D, name: string, x: number
   holder.position.set(x, 0.08, z);
   holder.rotation.y = rot;
   holder.name = `prop:${name}`; // "prop:flag_*" ondea
+  // Las pilas de material crecen con lo acumulado en el edificio.
+  if (name === 'resource_lumber' || name === 'resource_stone') holder.userData.fill = { min: 0.15, uniform: true };
   parent.add(holder);
 }
 
@@ -383,6 +414,7 @@ function buildFarm(assets: Assets, body: THREE.Group, size: number, level: numbe
   }
   field.count = n;
   field.castShadow = true;
+  field.userData.fill = { min: 0.3, uniform: false }; // el trigo crece según la cosecha acumulada
   body.add(field);
   addProp(assets, body, 'sack', -size * 0.36, size * 0.4, size * 0.14);
   return h;
@@ -434,7 +466,7 @@ const ghostOk = new THREE.MeshStandardMaterial({ color: '#5fe07a', transparent: 
 const ghostBad = new THREE.MeshStandardMaterial({ color: '#ff4a3d', transparent: true, opacity: 0.5, depthWrite: false, emissive: new THREE.Color('#7a1f1a') });
 
 export function createGhost(assets: Assets, type: BuildingType): THREE.Group {
-  const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null };
+  const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null, hp: 1, stored: 0 };
   const g = createBuildingVisual(assets, fake).root;
   const size = BUILDING_DEFS[type].size;
   const base = new THREE.Mesh(cached(`ghost:${size}`, () => new THREE.BoxGeometry(size, 0.04, size)), ghostOk);

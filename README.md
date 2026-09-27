@@ -57,6 +57,7 @@ KAYKIT_DIR=../kaykit pnpm assets
 
 | Acción | Control |
 | --- | --- |
+| Recolectar recursos | Pasar el ratón por la burbuja del edificio (o tocarla) |
 | Seleccionar edificio | Clic |
 | Desplazar cámara | Arrastrar con clic izquierdo · WASD |
 | Rotar cámara | Arrastrar con clic derecho |
@@ -64,7 +65,7 @@ KAYKIT_DIR=../kaykit pnpm assets
 | Cancelar / deseleccionar | Esc · clic derecho |
 | Colocar en cadena | Mayús + clic (los muros lo hacen siempre) |
 
-Los botones ×1 / ×5 / ×20 aceleran el tiempo para probar. La partida se guarda sola en `localStorage`, y al volver la aldea avanza lo que haya pasado mientras estabas fuera (hasta 8 h).
+Los botones ×1 / ×5 / ×20 aceleran el tiempo para probar, y **💥 Simular ataque** daña edificios al azar para ver cómo los aldeanos los reparan. La partida se guarda sola en `localStorage`, y al volver la aldea avanza lo que haya pasado mientras estabas fuera (hasta 8 h).
 
 ## Estructura
 

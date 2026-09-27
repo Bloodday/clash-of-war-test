@@ -1,6 +1,6 @@
 import { TICK_RATE } from './data';
 import { advance } from './sim';
-import type { GameState } from './state';
+import { migrateState, type GameState } from './state';
 
 // Serialización local. Cuando exista backend, el servidor será quien guarde
 // el estado y calcule el progreso offline con esta misma lógica.
@@ -21,7 +21,9 @@ export function serialize(state: GameState, now: number): string {
 export function deserialize(json: string, now: number): { state: GameState; offlineSeconds: number } | null {
   try {
     const file = JSON.parse(json) as SaveFile;
-    if (!file?.state || file.state.version !== 1) return null;
+    const state = migrateState(file?.state);
+    if (!state) return null;
+    file.state = state;
     const elapsed = Math.max(0, Math.min(MAX_OFFLINE_SECONDS, (now - file.savedAt) / 1000));
     advance(file.state, elapsed * TICK_RATE);
     return { state: file.state, offlineSeconds: elapsed };

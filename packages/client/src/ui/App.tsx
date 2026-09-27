@@ -20,7 +20,7 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
   const selected = ui.selectedId !== null ? state.buildings.find((b) => b.id === ui.selectedId) : undefined;
   const mode = ui.mode;
 
-  let hint = 'Clic: seleccionar · Arrastrar: desplazar · Clic derecho + arrastrar: rotar · Rueda: zoom · WASD: mover cámara';
+  let hint = 'Pasa el ratón por las burbujas para recolectar · Clic: seleccionar · Arrastrar: desplazar · Clic derecho: rotar · Rueda: zoom';
   if (mode.kind === 'place') {
     const name = BUILDING_DEFS[mode.building].name;
     hint = `Colocando ${name} · Clic para construir${mode.building === 'wall' ? ' (en cadena)' : ' · Mayús: en cadena'} · Esc o clic derecho: cancelar`;
@@ -59,6 +59,9 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
             ×{s}
           </button>
         ))}
+        <button class="small" title="Daña edificios al azar para probar las reparaciones" onClick={() => ui.simulateAttack()}>
+          💥 Simular ataque
+        </button>
         <button
           class="small danger"
           onClick={() => {

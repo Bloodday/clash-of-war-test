@@ -2,6 +2,7 @@ import {
   BUILDING_DEFS,
   RESOURCES,
   ROLE_DEFS,
+  type BuildingType,
   type CommandError,
   type Cost,
   type GameState,
@@ -26,13 +27,22 @@ export const ERROR_MESSAGES: Record<CommandError, string> = {
   noIdleBuilder: 'No hay aldeanos libres para construir.',
   busy: 'Está ocupado ahora mismo.',
   maxLevel: 'Ya está al nivel máximo.',
-  notWorkplace: 'Este edificio no admite trabajadores.',
   noFreeSlot: 'No quedan huecos libres.',
-  notCivilian: 'Los soldados no trabajan en la economía.',
+  damaged: 'Repara el edificio antes de mejorarlo.',
+  notProducer: 'Este edificio no produce recursos.',
+  nothingToCollect: 'Todavía no hay nada que recolectar.',
+  storageFull: 'Tus almacenes están llenos. Mejora el ayuntamiento o construye almacenes.',
   notTrainingBuilding: 'Este edificio no entrena roles.',
   buildingLevelTooLow: 'Mejora el edificio para entrenar el siguiente nivel.',
   noHousing: 'Construye o mejora casas para alojar a más aldeanos.',
 };
+
+const FEMININE = new Set<BuildingType>(['house', 'farm', 'goldMine', 'archerTower']);
+
+/** Concordancia de género: participio("house", "construid") → "construida". */
+export function participle(type: BuildingType, stem: string): string {
+  return stem + (FEMININE.has(type) ? 'a' : 'o');
+}
 
 export function fmtNum(n: number): string {
   return Math.floor(n).toLocaleString('es-ES');
@@ -64,8 +74,8 @@ export function taskLabel(state: GameState, v: Villager): string {
   switch (t.kind) {
     case 'idle':
       return v.role ? 'En guardia' : 'Libre';
-    case 'work':
-      return `Trabajando · ${bName(t.buildingId)}`;
+    case 'repair':
+      return `Reparando · ${bName(t.buildingId)}`;
     case 'build':
       return `Construyendo · ${bName(t.buildingId)}`;
     case 'train':

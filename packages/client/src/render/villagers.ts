@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { BUILDING_DEFS, ROLE_DEFS, type Building, type GameState, type RoleId, type Villager } from '@cow/shared';
+import { BUILDING_DEFS, ROLE_DEFS, TICK_RATE, type Building, type GameState, type RoleId, type Villager } from '@cow/shared';
 import type { Assets, CharacterName } from './assets';
 import { cellToWorld } from './coords';
 import type { Particles } from './particles';
@@ -36,7 +36,7 @@ function lookFor(v: Villager): Look {
 
 const BODY_PART = /_(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
 
-type Activity = 'idle' | 'work' | 'build' | 'train';
+type Activity = 'idle' | 'build' | 'repair' | 'train';
 
 interface Agent {
   root: THREE.Group;
@@ -180,12 +180,13 @@ export class VillagerAgents {
   private plan(state: GameState, v: Villager): { key: string; building: Building | undefined; activity: Activity } {
     const t = v.task;
     const byId = (id: number) => state.buildings.find((b) => b.id === id);
-    if (t.kind === 'work') return { key: `w${t.buildingId}`, building: byId(t.buildingId), activity: 'work' };
+    if (t.kind === 'repair') return { key: `r${t.buildingId}`, building: byId(t.buildingId), activity: 'repair' };
     if (t.kind === 'build') return { key: `b${t.buildingId}`, building: byId(t.buildingId), activity: 'build' };
     if (t.kind === 'train') return { key: `t${t.buildingId}`, building: byId(t.buildingId), activity: 'train' };
+    // Soldados: de guardia junto a su edificio. Civiles libres: pasean de un edificio a otro.
     const home = v.role
       ? state.buildings.find((b) => b.type === ROLE_DEFS[v.role!].trainedAt)
-      : state.buildings.find((b) => b.type === 'townHall');
+      : state.buildings[(v.id * 7 + Math.floor(state.tick / (TICK_RATE * 12)) * 3) % state.buildings.length];
     return { key: `i${home?.id}`, building: home ?? state.buildings.find((b) => b.type === 'townHall'), activity: 'idle' };
   }
 
@@ -266,31 +267,23 @@ export class VillagerAgents {
     }
 
     show('Mug', false);
-    if (activity === 'build' || (activity === 'work' && b && (b.type === 'lumberCamp' || b.type === 'goldMine'))) {
+    if (activity === 'build' || activity === 'repair') {
+      // Construir y reparar: martillazos con chispas y astillas.
       show('1H_Axe', true);
-      this.play(agent, '1H_Melee_Attack_Chop', false, 0.9);
-      if (agent.fxClock > 1.0) {
+      const clip = activity === 'repair' && agent.loopIndex % 3 === 2 ? 'Interact' : '1H_Melee_Attack_Chop';
+      this.play(agent, clip, false, activity === 'repair' ? 1.1 : 0.9);
+      if (agent.loopClock > 2.4) {
+        agent.loopClock = 0;
+        agent.loopIndex++;
+      }
+      if (agent.fxClock > 0.9 && clip !== 'Interact') {
         agent.fxClock = 0;
-        if (activity === 'build') this.particles.sparks(hand, 5);
-        else if (b?.type === 'lumberCamp') this.particles.chips(hand, '#c08a4d');
-        else {
-          this.particles.chips(hand, '#8d8d8d');
-          this.particles.sparks(hand, 3, '#fff1a0');
-        }
+        this.particles.sparks(hand, 5);
+        this.particles.chips(hand, activity === 'repair' ? '#9a9a9a' : '#c08a4d');
       }
       return;
     }
     show('1H_Axe', false);
-
-    if (activity === 'work') {
-      const clip = agent.loopIndex % 2 === 0 ? 'Interact' : 'PickUp';
-      this.play(agent, clip);
-      if (agent.loopClock > 3) {
-        agent.loopClock = 0;
-        agent.loopIndex++;
-      }
-      return;
-    }
 
     // Entrenamiento según el rol que se aprende.
     const role: RoleId | undefined = v.task.kind === 'train' ? v.task.role : undefined;
@@ -323,10 +316,6 @@ function centerOf(b: Building): THREE.Vector3 {
 function spotFor(b: Building, activity: Activity): { spot: THREE.Vector3; face: THREE.Vector3 | null } {
   const size = BUILDING_DEFS[b.type].size;
   const c = centerOf(b);
-  if (activity === 'work' && b.type === 'farm') {
-    const spot = c.clone().add(new THREE.Vector3((0.05 + Math.random() * 0.35) * size, 0.1, (Math.random() - 0.5) * 0.8 * size));
-    return { spot, face: spot.clone().add(new THREE.Vector3(0, 0, 1)) };
-  }
   const r = size / 2 + (activity === 'idle' ? 0.8 + Math.random() * (b.type === 'townHall' ? 2.5 : 1.2) : 0.35);
   const side = Math.floor(Math.random() * 4);
   const t = (Math.random() * 2 - 1) * (size / 2) * 0.85;

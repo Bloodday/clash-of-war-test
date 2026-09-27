@@ -9,7 +9,7 @@ import {
   type ResourceId,
   type RoleId,
 } from './data';
-import type { Building, GameState, Villager } from './state';
+import { maxHp, type Building, type GameState, type Villager } from './state';
 
 // Consultas puras sobre el estado (sin efectos secundarios).
 
@@ -26,9 +26,13 @@ export function currentLevelDef(b: Building): BuildingLevelDef | undefined {
   return b.level > 0 ? BUILDING_DEFS[b.type].levels[b.level - 1] : undefined;
 }
 
-/** Un edificio está operativo si existe y no está en obras. */
+/** Un edificio está operativo si existe, no está en obras y no está destruido. */
 export function isOperational(b: Building): boolean {
-  return b.level > 0 && b.construction === null;
+  return b.level > 0 && b.construction === null && b.hp > 0;
+}
+
+export function isDamaged(b: Building): boolean {
+  return b.level > 0 && b.hp < maxHp(b);
 }
 
 export function getTownHallLevel(state: GameState): number {
@@ -62,40 +66,53 @@ export function getHousing(state: GameState): number {
   return total;
 }
 
-export function getWorkers(state: GameState, buildingId: number): Villager[] {
-  return state.villagers.filter((v) => v.task.kind === 'work' && v.task.buildingId === buildingId);
-}
-
 export function getTrainees(state: GameState, buildingId: number): Villager[] {
   return state.villagers.filter((v) => v.task.kind === 'train' && v.task.buildingId === buildingId);
 }
 
-/** Aldeanos civiles sin tarea: los únicos que pueden construir. */
+export function getRepairers(state: GameState, buildingId: number): Villager[] {
+  return state.villagers.filter((v) => v.task.kind === 'repair' && v.task.buildingId === buildingId);
+}
+
+/** Aldeanos civiles sin tarea: los únicos que pueden construir o reparar. */
 export function getIdleCivilians(state: GameState): Villager[] {
   return state.villagers.filter((v) => v.role === null && v.task.kind === 'idle');
 }
 
-/** Producción por segundo de un edificio concreto. */
-export function getBuildingProduction(state: GameState, b: Building): Cost {
-  const def = currentLevelDef(b);
-  if (!def?.productionPerWorker || !isOperational(b)) return {};
-  const workers = getWorkers(state, b.id).length;
-  const out: Cost = {};
-  for (const r of RESOURCES) {
-    const rate = def.productionPerWorker[r];
-    if (rate) out[r] = rate * workers;
-  }
-  return out;
+/** Recurso que produce un edificio (o undefined si no es productor). */
+export function producedResource(type: BuildingType): ResourceId | undefined {
+  const prod = BUILDING_DEFS[type].levels[0]!.production;
+  return prod ? RESOURCES.find((r) => (prod[r] ?? 0) > 0) : undefined;
 }
 
-/** Producción total por segundo de la aldea. */
+/** Capacidad del depósito propio de un productor en su nivel actual. */
+export function producerCapacity(b: Building): number {
+  return currentLevelDef(b)?.capacity ?? 0;
+}
+
+/** Producción por segundo de un edificio (0 si está lleno, en obras o destruido). */
+export function getBuildingProduction(b: Building): Cost {
+  const def = currentLevelDef(b);
+  if (!def?.production || !isOperational(b) || b.stored >= producerCapacity(b)) return {};
+  return def.production;
+}
+
+/** Producción total por segundo de la aldea (lo que llenan los productores). */
 export function getProductionRates(state: GameState): Record<ResourceId, number> {
   const rates: Record<ResourceId, number> = { gold: 0, wood: 0, food: 0 };
   for (const b of state.buildings) {
-    const p = getBuildingProduction(state, b);
+    const p = getBuildingProduction(b);
     for (const r of RESOURCES) rates[r] += p[r] ?? 0;
   }
   return rates;
+}
+
+/** Cuánto se llevaría ahora mismo una recolección (limitado por los almacenes). */
+export function collectableAmount(state: GameState, b: Building): number {
+  const r = producedResource(b.type);
+  if (!r) return 0;
+  const room = Math.max(0, getStorageCapacity(state)[r] - state.resources[r]);
+  return Math.floor(Math.min(b.stored, room));
 }
 
 export function canAfford(state: GameState, cost: Cost): boolean {

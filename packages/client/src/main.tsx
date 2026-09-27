@@ -38,6 +38,8 @@ async function main() {
     return;
   }
   ui.onQualityChange = (q) => world.setQuality(q);
+  ui.collect = (id) => world.collect(id);
+  ui.simulateAttack = () => world.simulateAttack();
   // Sin preferencia guardada, WebGL 2 arranca en calidad media.
   if (ui.qualityAuto && ui.backend !== 'WebGPU') ui.setQuality('medium', true);
   render(<App game={game} ui={ui} />, document.getElementById('ui')!);

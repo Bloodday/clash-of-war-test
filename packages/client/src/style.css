@@ -903,3 +903,125 @@ button.big {
     background-position: 14px 0;
   }
 }
+
+/* ---- Recolección ---- */
+.bubble {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 6px;
+}
+.bubble-body {
+  width: 44px;
+  height: 44px;
+  border-radius: 50% 50% 50% 6px;
+  background: radial-gradient(circle at 35% 30%, #ffffff, #f4ecd8 55%, #d9c9a4);
+  border: 3px solid #fff;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35), 0 0 0 2px rgba(120, 80, 20, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotate(-45deg);
+  animation: bubble-in 0.35s var(--spring) both;
+}
+.bubble-icon {
+  transform: rotate(45deg);
+  font-size: 22px;
+}
+.bubble-icon {
+  animation: bubble-bob 1.6s ease-in-out infinite;
+}
+.bubble.full .bubble-body {
+  width: 52px;
+  height: 52px;
+  border-color: #ffd24a;
+  box-shadow: 0 0 0 3px rgba(255, 190, 40, 0.55), 0 0 18px rgba(255, 200, 60, 0.9), 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+.bubble.full .bubble-icon {
+  font-size: 26px;
+  animation: bubble-bob 0.9s ease-in-out infinite;
+}
+.bubble:hover .bubble-body {
+  filter: brightness(1.1);
+}
+.bubble.pop .bubble-body {
+  animation: bubble-out 0.25s ease-in forwards;
+}
+@keyframes bubble-in {
+  from {
+    transform: rotate(-45deg) scale(0);
+  }
+}
+@keyframes bubble-out {
+  to {
+    transform: rotate(-45deg) scale(1.6);
+    opacity: 0;
+  }
+}
+@keyframes bubble-bob {
+  0%,
+  100% {
+    transform: rotate(45deg);
+  }
+  50% {
+    transform: rotate(45deg) translateY(-3px) scale(1.08);
+  }
+}
+
+.flyer {
+  position: fixed;
+  left: 0;
+  top: 0;
+  font-size: 22px;
+  pointer-events: none;
+  z-index: 40;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+  will-change: transform;
+}
+.res-icon.hit {
+  animation: res-hit 0.3s var(--spring);
+}
+@keyframes res-hit {
+  40% {
+    transform: scale(1.45) rotate(-8deg);
+  }
+}
+
+.floater-good {
+  color: #9dffa0;
+  font-size: 18px;
+}
+.floater-bad {
+  color: #ff9a8a;
+  font-size: 17px;
+}
+
+.stat.busy b {
+  color: #ff9a8a;
+}
+
+/* Barras de vida y depósito */
+.bar-hp .bar-fill {
+  background: linear-gradient(180deg, #8cf06a, #3ea52a);
+}
+.bar-hp .bar-fill::after {
+  animation: none;
+  background: none;
+}
+.progress.hp .progress-fill {
+  background: linear-gradient(90deg, #e2472f, #f0b43c 60%, #6cc04a);
+}
+.progress.stock .progress-fill {
+  background: linear-gradient(90deg, #f0b43c, #ffd764);
+  transition: width 0.4s ease;
+}
+.progress.stock.full .progress-fill {
+  background: linear-gradient(90deg, #ff9d2e, #ffd24a);
+  animation: pulse 1s ease-in-out infinite;
+}
+small.warn {
+  color: #ffcf5a;
+  font-weight: 700;
+}

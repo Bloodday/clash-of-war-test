@@ -1,20 +1,20 @@
-import { RESOURCES, TICK_RATE } from './data';
-import { getProductionRates, getStorageCapacity } from './queries';
-import type { GameState } from './state';
+import { REPAIR_MIN_HP_PER_SECOND, REPAIR_RATE, TICK_RATE } from './data';
+import { currentLevelDef, getIdleCivilians, isDamaged, isOperational, producedResource, producerCapacity } from './queries';
+import { maxHp, type GameState } from './state';
 
 /**
  * Avanza la simulación `dt` ticks. Con dt=1 es el paso normal del bucle de
  * juego; con dt mayores se usa para recuperar el tiempo transcurrido offline.
  */
 export function tick(state: GameState, dt = 1): void {
-  // 1) Producción (con los niveles vigentes al inicio del paso).
-  const rates = getProductionRates(state);
-  const cap = getStorageCapacity(state);
   const seconds = dt / TICK_RATE;
-  for (const r of RESOURCES) {
-    const current = state.resources[r];
-    // Si ya se estaba por encima de la capacidad (p. ej. tras perder un almacén) no se recorta.
-    if (current < cap[r]) state.resources[r] = Math.min(cap[r], current + rates[r] * seconds);
+
+  // 1) Producción: cada productor llena su propio depósito hasta su capacidad.
+  for (const b of state.buildings) {
+    const prod = currentLevelDef(b)?.production;
+    const r = producedResource(b.type);
+    if (!prod || !r || !isOperational(b)) continue;
+    b.stored = Math.min(producerCapacity(b), b.stored + (prod[r] ?? 0) * seconds);
   }
 
   // 2) Obras.
@@ -25,12 +25,28 @@ export function tick(state: GameState, dt = 1): void {
     if (c.remainingTicks <= 0) {
       b.level = c.targetLevel;
       b.construction = null;
+      b.hp = maxHp(b);
       const builder = state.villagers.find((v) => v.id === c.builderId);
       if (builder && builder.task.kind === 'build') builder.task = { kind: 'idle' };
     }
   }
 
-  // 3) Entrenamiento.
+  // 3) Reparaciones: los aldeanos civiles libres acuden solos a los edificios dañados.
+  assignRepairs(state);
+  for (const v of state.villagers) {
+    const t = v.task;
+    if (t.kind !== 'repair') continue;
+    const b = state.buildings.find((x) => x.id === t.buildingId);
+    if (!b || !isDamaged(b) || b.construction) {
+      v.task = { kind: 'idle' };
+      continue;
+    }
+    const max = maxHp(b);
+    b.hp = Math.min(max, b.hp + Math.max(REPAIR_MIN_HP_PER_SECOND, max * REPAIR_RATE) * seconds);
+    if (b.hp >= max) v.task = { kind: 'idle' };
+  }
+
+  // 4) Entrenamiento.
   for (const v of state.villagers) {
     const t = v.task;
     if (t.kind !== 'train') continue;
@@ -43,6 +59,29 @@ export function tick(state: GameState, dt = 1): void {
   }
 
   state.tick += dt;
+}
+
+/** Un reparador por edificio dañado, empezando por los más dañados. */
+function assignRepairs(state: GameState): void {
+  const damaged = state.buildings
+    .filter((b) => isDamaged(b) && !b.construction)
+    .filter((b) => !state.villagers.some((v) => v.task.kind === 'repair' && v.task.buildingId === b.id))
+    .sort((a, b) => a.hp / maxHp(a) - b.hp / maxHp(b) || a.id - b.id);
+  if (damaged.length === 0) return;
+  const idle = getIdleCivilians(state);
+  for (let i = 0; i < damaged.length && i < idle.length; i++) {
+    idle[i]!.task = { kind: 'repair', buildingId: damaged[i]!.id };
+  }
+}
+
+/**
+ * Daña un edificio (lo usarán las batallas). A 0 de vida queda destruido:
+ * deja de funcionar hasta que lo reparen.
+ */
+export function applyDamage(state: GameState, buildingId: number, amount: number): void {
+  const b = state.buildings.find((x) => x.id === buildingId);
+  if (!b || b.level === 0) return;
+  b.hp = Math.max(0, b.hp - Math.max(0, amount));
 }
 
 /** Avanza muchos ticks en bloques (para el progreso offline). */

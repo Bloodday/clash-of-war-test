@@ -1,8 +1,10 @@
-import { GRID_SIZE, VILLAGER_NAMES, type BuildingType, type ResourceId, type RoleId } from './data';
+import { BUILDING_DEFS, GRID_SIZE, VILLAGER_NAMES, type BuildingType, type ResourceId, type RoleId } from './data';
 import { nextRandom } from './rng';
 
 // El estado es un objeto plano y serializable: se guarda tal cual en
 // localStorage hoy, y mañana lo validará/sincronizará el servidor.
+
+export const STATE_VERSION = 2;
 
 export interface Construction {
   targetLevel: number;
@@ -18,12 +20,14 @@ export interface Building {
   y: number;
   level: number; // 0 = todavía en construcción
   construction: Construction | null;
+  hp: number; // vida actual (0 = destruido; los aldeanos lo reparan)
+  stored: number; // recursos acumulados sin recolectar (solo productores)
 }
 
 export type VillagerTask =
   | { kind: 'idle' }
-  | { kind: 'work'; buildingId: number }
   | { kind: 'build'; buildingId: number }
+  | { kind: 'repair'; buildingId: number }
   | {
       kind: 'train';
       buildingId: number;
@@ -36,13 +40,13 @@ export type VillagerTask =
 export interface Villager {
   id: number;
   name: string;
-  role: RoleId | null; // null = civil (puede trabajar y construir)
+  role: RoleId | null; // null = civil (construye y repara)
   roleLevel: number;
   task: VillagerTask;
 }
 
 export interface GameState {
-  version: 1;
+  version: typeof STATE_VERSION;
   tick: number;
   rng: number;
   nextId: number;
@@ -62,15 +66,22 @@ export function createVillager(state: GameState): Villager {
   return villager;
 }
 
+/** Vida máxima de un edificio en su nivel actual (o en el primero si está en obras). */
+export function maxHp(b: Pick<Building, 'type' | 'level'>): number {
+  const levels = BUILDING_DEFS[b.type].levels;
+  return levels[Math.max(1, b.level) - 1]!.hp;
+}
+
 function addBuilt(state: GameState, type: BuildingType, x: number, y: number): Building {
-  const building: Building = { id: allocId(state), type, x, y, level: 1, construction: null };
+  const building: Building = { id: allocId(state), type, x, y, level: 1, construction: null, hp: 0, stored: 0 };
+  building.hp = maxHp(building);
   state.buildings.push(building);
   return building;
 }
 
 export function createInitialState(seed = 12345): GameState {
   const state: GameState = {
-    version: 1,
+    version: STATE_VERSION,
     tick: 0,
     rng: seed >>> 0,
     nextId: 1,
@@ -81,10 +92,30 @@ export function createInitialState(seed = 12345): GameState {
   const c = GRID_SIZE / 2;
   addBuilt(state, 'townHall', c - 2, c - 2);
   addBuilt(state, 'house', c - 6, c - 1);
-  const farm = addBuilt(state, 'farm', c - 1, c + 4);
-  const first = createVillager(state);
-  first.task = { kind: 'work', buildingId: farm.id };
+  // La granja inicial ya tiene algo de cosecha para enseñar a recolectar.
+  addBuilt(state, 'farm', c - 1, c + 4).stored = 120;
+  createVillager(state);
   createVillager(state);
   createVillager(state);
   return state;
+}
+
+/**
+ * Actualiza un estado guardado con una versión anterior. Devuelve null si no
+ * se reconoce. v1 → v2: sin trabajadores; vida y depósito en los edificios.
+ */
+export function migrateState(raw: unknown): GameState | null {
+  const s = raw as { version?: number } & Partial<GameState>;
+  if (!s || typeof s !== 'object' || !Array.isArray(s.buildings) || !Array.isArray(s.villagers)) return null;
+  if (s.version === STATE_VERSION) return s as GameState;
+  if (s.version !== 1) return null;
+  for (const b of s.buildings as Building[]) {
+    b.hp = maxHp(b);
+    b.stored = 0;
+  }
+  for (const v of s.villagers as Villager[]) {
+    if ((v.task as { kind: string }).kind === 'work') v.task = { kind: 'idle' };
+  }
+  s.version = STATE_VERSION;
+  return s as GameState;
 }
