@@ -41,7 +41,7 @@ export function BuildMenu({ state, ui, onClose }: { state: GameState; ui: UiStor
         ))}
       </div>
       <div class="cards">
-        {types.map((type) => {
+        {types.map((type, i) => {
           const def = BUILDING_DEFS[type];
           const first = def.levels[0]!;
           const count = countBuildings(state, type);
@@ -55,6 +55,7 @@ export function BuildMenu({ state, ui, onClose }: { state: GameState; ui: UiStor
             <button
               key={type}
               class={disabled ? 'card disabled' : 'card'}
+              style={{ '--i': i }}
               disabled={disabled}
               onClick={() => {
                 ui.select(null);
@@ -62,6 +63,9 @@ export function BuildMenu({ state, ui, onClose }: { state: GameState; ui: UiStor
                 onClose();
               }}
             >
+              <div class="card-thumb">
+                {ui.thumbnails.get(`${type}:1`) ? <img src={ui.thumbnails.get(`${type}:1`)} alt="" /> : <div class="thumb-placeholder" />}
+              </div>
               <div class="card-title">
                 {def.name}
                 <small>

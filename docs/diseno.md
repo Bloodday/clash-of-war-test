@@ -52,12 +52,25 @@ Implicaciones técnicas:
   - `render/`: Three.js `WebGPURenderer` (con fallback a WebGL 2), modelos low-poly procedurales provisionales, aldeanos animados y barras de progreso ancladas en 3D.
   - `ui/`: Preact para el HUD y los paneles.
 
+## Dirección visual
+
+Estética *low-poly* colorida y cálida, en la línea de los constructores de aldeas móviles.
+
+- **Modelos**: packs CC0 de KayKit. Cada edificio usa un modelo por nivel (casa → casa grande → taberna; torre A → torre B → torre con catapulta; empalizada → muro de piedra → muralla) y añade *props* al subir de nivel (banderas, torres en el ayuntamiento, barriles, dianas…).
+- **Obras**: cimientos → fase A → B → C con andamio; las mejoras muestran andamio alrededor del edificio.
+- **Aldeanos**: personajes riggeados con 26 animaciones compartidas. Civil = bárbaro con hacha o jarra; guerrero = caballero (casco, capa y escudo mejor según nivel); arquero = pícaro con ballesta; sanador = mago con bastón. Animaciones según la tarea: talar, cosechar, construir, entrenar con espada, disparar, lanzar hechizos, descansar, celebrar el ascenso.
+- **Animación procedural**: aparición con *squash & stretch*, salto al seleccionar, aspas de molino y sierras que giran solo si hay trabajadores, banderas ondeando, trigo, hierba y árboles con viento (shaders TSL).
+- **Partículas** (sprites instanciados en GPU): polvo al construir y mover, humo de chimeneas, chispas al martillear, astillas, destellos de oro, magia, confeti al terminar una obra o ascender.
+- **Entorno**: terreno con colinas y lago generado por ruido, agua animada con espuma en la orilla, bosque y montañas instanciados, nubes a la deriva, césped en damero dentro de la parcela y camino de tierra alrededor.
+- **Postprocesado**: GTAO, bloom, SMAA/FXAA, viñeta y gradación de color, con tres niveles de calidad y ajuste automático por FPS.
+- **Interfaz**: miniaturas 3D renderizadas en tiempo real para la tienda y los paneles, contadores animados, popups de producción ("+12 🌾"), anuncios de nivel y paneles con entradas elásticas.
+
 ## Hoja de ruta
 
 | Fase | Contenido | Estado |
 | --- | --- | --- |
 | 1 | Construcción de la aldea: edificios, economía, aldeanos, entrenamiento de roles, guardado local | ✅ Hecha |
-| 1.5 | Pulido: arte glTF, sonido, más feedback visual, balance | Pendiente |
+| 1.5 | Pulido: arte glTF, animaciones, partículas, postprocesado ✅ · sonido y balance pendientes | En curso |
 | 2 | Batalla RTS: simulación de combate en `shared`, IA de unidades y defensas, selección y órdenes, pathfinding | Pendiente |
 | 2.5 | Servidor autoritativo de batalla (Node + WebSocket), ataques asíncronos contra la IA | Pendiente |
 | 3 | Primera persona: poseer soldados, cambio táctica ↔ FPS, relevo al morir | Pendiente |

@@ -1,0 +1,487 @@
+import * as THREE from 'three/webgpu';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { hash, instanceIndex, positionLocal, sin, time, vec3, vertexColor } from 'three/tsl';
+import { BUILDING_DEFS, type Building, type BuildingType } from '@cow/shared';
+import { localBounds, type Assets } from './assets';
+import { seeded } from './noise';
+
+// Representación visual de los edificios a partir de los modelos KayKit.
+
+export interface BuildingVisual {
+  /** Nodo posicionado por el mundo. */
+  root: THREE.Group;
+  /** Hijo que se deforma en las animaciones de aparición/selección. */
+  body: THREE.Group;
+  /** Altura aproximada del modelo (para etiquetas y efectos). */
+  height: number;
+  /** Puntos locales de donde sale humo (chimeneas). */
+  smoke: THREE.Vector3[];
+  /** Anima las piezas móviles. `active` indica si el edificio está trabajando. */
+  update(dt: number, active: boolean): void;
+}
+
+interface Spec {
+  models: string[]; // uno por nivel (se repite el último)
+  fill: number; // fracción de la huella que ocupa el modelo
+  pad: string;
+  props?: (level: number) => [string, number, number, number, number?][]; // modelo, x, z (−0.5..0.5), escala relativa, rotación
+  chimney?: [number, number, number]; // posición relativa al tamaño del modelo
+}
+
+const PAD_DIRT = '#b99a6b';
+const PAD_STONE = '#a7a193';
+const PAD_GRASS = '#86b653';
+
+const SPECS: Record<Exclude<BuildingType, 'wall' | 'farm'>, Spec> = {
+  townHall: {
+    models: ['building_castle_blue'],
+    fill: 0.62,
+    pad: PAD_STONE,
+    props: (l) => [
+      ...(l >= 2 ? ([['flag_blue', -0.44, 0.44, 0.06], ['flag_blue', 0.44, 0.44, 0.06]] as const) : []),
+      ...(l >= 3 ? ([['building_tower_A_blue', -0.4, -0.4, 0.24], ['building_tower_A_blue', 0.4, -0.4, 0.24]] as const) : []),
+      ...(l >= 4 ? ([['building_well_blue', 0.42, 0.05, 0.16], ['barrel', -0.44, 0.1, 0.07], ['crate_A_small', -0.44, -0.02, 0.07]] as const) : []),
+      ...(l >= 5 ? ([['building_tower_B_blue', -0.4, 0.4, 0.24], ['building_tower_B_blue', 0.4, 0.4, 0.24]] as const) : []),
+    ] as [string, number, number, number][],
+  },
+  house: {
+    models: ['building_home_A_blue', 'building_home_B_blue', 'building_tavern_blue'],
+    fill: 0.9,
+    pad: PAD_GRASS,
+    props: (l) => (l >= 2 ? [['barrel', 0.4, 0.4, 0.2]] : []),
+    chimney: [0.2, 0.95, -0.1],
+  },
+  lumberCamp: {
+    models: ['building_lumbermill_blue'],
+    fill: 0.7,
+    pad: PAD_DIRT,
+    props: (l) => [
+      ['resource_lumber', 0.3, 0.38, 0.35, 0.3],
+      ['tree_single_A_cut', -0.4, 0.4, 0.12],
+      ...(l >= 2 ? ([['wheelbarrow', 0.4, -0.3, 0.2, 1.2]] as const) : []),
+      ...(l >= 3 ? ([['resource_lumber', -0.38, -0.36, 0.3, 1.5]] as const) : []),
+    ] as [string, number, number, number, number?][],
+    chimney: [-0.1, 1.0, -0.1],
+  },
+  goldMine: {
+    models: ['building_mine_blue'],
+    fill: 0.8,
+    pad: PAD_DIRT,
+    props: (l) => [
+      ['resource_stone', 0.36, 0.38, 0.3],
+      ...(l >= 2 ? ([['wheelbarrow', -0.36, 0.4, 0.22, -0.6]] as const) : []),
+      ...(l >= 3 ? ([['crate_A_small', 0.42, -0.1, 0.16]] as const) : []),
+    ] as [string, number, number, number, number?][],
+  },
+  storehouse: {
+    models: ['building_market_blue'],
+    fill: 0.78,
+    pad: PAD_DIRT,
+    props: (l) => [
+      ['crate_A_big', -0.4, 0.4, 0.2],
+      ['sack', 0.4, 0.42, 0.16],
+      ...(l >= 2 ? ([['barrel', 0.42, -0.36, 0.16], ['crate_long_A', -0.4, -0.38, 0.2, 1.57]] as const) : []),
+      ...(l >= 3 ? ([['crate_open', 0.0, 0.46, 0.18]] as const) : []),
+    ] as [string, number, number, number, number?][],
+  },
+  barracks: {
+    models: ['building_barracks_blue'],
+    fill: 0.78,
+    pad: PAD_STONE,
+    props: (l) => [
+      ['weaponrack', 0.36, 0.42, 0.24],
+      ...(l >= 2 ? ([['flag_blue', -0.44, 0.44, 0.06]] as const) : []),
+      ...(l >= 3 ? ([['tent', -0.36, -0.4, 0.24]] as const) : []),
+    ] as [string, number, number, number, number?][],
+    chimney: [0.25, 0.9, 0.0],
+  },
+  archeryRange: {
+    models: ['building_archeryrange_blue'],
+    fill: 0.72,
+    pad: PAD_GRASS,
+    props: (l) => [
+      ['target', -0.36, 0.42, 0.22],
+      ['bucket_arrows', 0.42, 0.42, 0.14],
+      ...(l >= 2 ? ([['target', 0.0, 0.46, 0.22]] as const) : []),
+      ...(l >= 3 ? ([['target', 0.36, -0.42, 0.22, Math.PI]] as const) : []),
+    ] as [string, number, number, number, number?][],
+  },
+  temple: {
+    models: ['building_church_blue'],
+    fill: 0.74,
+    pad: PAD_STONE,
+    props: (l) => (l >= 2 ? [['flag_blue', 0.44, 0.44, 0.06]] : []),
+  },
+  archerTower: {
+    models: ['building_tower_A_blue', 'building_tower_B_blue', 'building_tower_catapult_blue'],
+    fill: 0.92,
+    pad: PAD_STONE,
+  },
+};
+
+/** Escala uniforme para que el modelo ocupe `width` en planta, centrado y apoyado en el suelo. */
+function fit(obj: THREE.Object3D, width: number): number {
+  const box = localBounds(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const k = width / Math.max(size.x, size.z, 0.001);
+  obj.position.set(-(box.min.x + size.x / 2) * k, -box.min.y * k, -(box.min.z + size.z / 2) * k);
+  obj.scale.setScalar(k);
+  return size.y * k;
+}
+
+// Geometrías y materiales compartidos: las vistas se reconstruyen al cambiar de
+// fase o de nivel, así que no se crean recursos nuevos cada vez.
+const cache = new Map<string, unknown>();
+function cached<T>(key: string, make: () => T): T {
+  let v = cache.get(key) as T | undefined;
+  if (v === undefined) {
+    v = make();
+    cache.set(key, v);
+  }
+  return v;
+}
+
+const standard = (color: string, roughness = 0.95) =>
+  cached(`mat:${color}:${roughness}`, () => new THREE.MeshStandardMaterial({ color, roughness }));
+
+function pad(size: number, colorHex: string): THREE.Mesh {
+  const geo = cached(`pad:${size}`, () => new RoundedBoxGeometry(size - 0.12, 0.14, size - 0.12, 2, 0.06));
+  const m = new THREE.Mesh(geo, standard(colorHex));
+  m.position.y = 0.02;
+  m.receiveShadow = true;
+  return m;
+}
+
+/** Libera los recursos propios de una vista (los buffers de instancias). */
+export function disposeVisual(v: BuildingVisual): void {
+  v.root.traverse((o) => {
+    if (o instanceof THREE.InstancedMesh) o.dispose();
+  });
+}
+
+interface Spinner {
+  obj: THREE.Object3D;
+  axis: 'x' | 'y' | 'z';
+  speed: number;
+  current: number;
+  always: boolean;
+}
+
+function findSpinners(root: THREE.Object3D): Spinner[] {
+  const out: Spinner[] = [];
+  root.traverse((o) => {
+    if (/fan/.test(o.name)) out.push({ obj: o, axis: 'z', speed: 1.4, current: 0, always: true });
+    else if (/wheel/.test(o.name)) out.push({ obj: o, axis: 'x', speed: 1.2, current: 0, always: true });
+    else if (/saw/.test(o.name)) out.push({ obj: o, axis: 'x', speed: 9, current: 0, always: false });
+  });
+  return out;
+}
+
+function findFlags(root: THREE.Object3D): THREE.Object3D[] {
+  const out: THREE.Object3D[] = [];
+  root.traverse((o) => {
+    if (/^prop:flag_/.test(o.name)) out.push(o);
+  });
+  return out;
+}
+
+function makeVisual(root: THREE.Group, body: THREE.Group, height: number, smoke: THREE.Vector3[]): BuildingVisual {
+  const spinners = findSpinners(body);
+  const flags = findFlags(body);
+  const phase = Math.random() * 10;
+  let t = 0;
+  return {
+    root,
+    body,
+    height,
+    smoke,
+    update(dt, active) {
+      t += dt;
+      for (const s of spinners) {
+        const target = s.always || active ? s.speed : 0;
+        s.current += (target - s.current) * Math.min(1, dt * 2);
+        s.obj.rotation[s.axis] += s.current * dt;
+      }
+      flags.forEach((f, i) => {
+        f.rotation.y = Math.sin(t * 2.6 + phase + i) * 0.25;
+      });
+    },
+  };
+}
+
+export function createBuildingVisual(assets: Assets, b: Building, wallMask = 0, constructionStage = 0): BuildingVisual {
+  const size = BUILDING_DEFS[b.type].size;
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  root.userData.buildingId = b.id;
+
+  if (b.type === 'wall') {
+    const h = buildWall(assets, body, Math.max(1, b.level), wallMask);
+    return makeVisual(root, body, h, []);
+  }
+
+  if (b.level === 0) {
+    const h = buildSite(assets, body, size, constructionStage);
+    return makeVisual(root, body, h, []);
+  }
+
+  let height: number;
+  const smoke: THREE.Vector3[] = [];
+  if (b.type === 'farm') {
+    height = buildFarm(assets, body, size, b.level);
+  } else {
+    const spec = SPECS[b.type];
+    body.add(pad(size, spec.pad));
+    const name = spec.models[Math.min(b.level, spec.models.length) - 1]!;
+    const model = assets.model(name);
+    height = fit(model, size * spec.fill);
+    // El ayuntamiento crece un poco con cada nivel.
+    if (b.type === 'townHall') {
+      const k = 1 + (b.level - 1) * 0.06;
+      model.scale.multiplyScalar(k);
+      model.position.multiplyScalar(k);
+      height *= k;
+    }
+    model.position.y += 0.08;
+    body.add(model);
+    for (const [prop, x, z, s, rot] of spec.props?.(b.level) ?? []) addProp(assets, body, prop, x * size, z * size, s * size, rot);
+    if (spec.chimney) {
+      const w = size * spec.fill;
+      smoke.push(new THREE.Vector3(spec.chimney[0] * w, spec.chimney[1] * height, spec.chimney[2] * w));
+    }
+  }
+  if (b.construction) addScaffoldAround(assets, body, size, height);
+  return makeVisual(root, body, height, smoke);
+}
+
+function addProp(assets: Assets, parent: THREE.Object3D, name: string, x: number, z: number, width: number, rot = 0): void {
+  if (!assets.has(name)) return;
+  const obj = assets.model(name);
+  const holder = new THREE.Group();
+  fit(obj, width);
+  holder.add(obj);
+  holder.position.set(x, 0.08, z);
+  holder.rotation.y = rot;
+  holder.name = `prop:${name}`; // "prop:flag_*" ondea
+  parent.add(holder);
+}
+
+function addScaffoldAround(assets: Assets, parent: THREE.Object3D, size: number, height: number): void {
+  const s = assets.model('building_scaffolding');
+  const h = fit(s, size * 0.98);
+  s.scale.y *= Math.max(0.6, (height * 0.75) / h);
+  s.position.y += 0.05;
+  parent.add(s);
+}
+
+/** Solar en obras: cimientos, fase de la construcción, andamio y material apilado. */
+function buildSite(assets: Assets, body: THREE.Group, size: number, stage: number): number {
+  body.add(pad(size, PAD_DIRT));
+  const stageModel = assets.model(['building_stage_A', 'building_stage_B', 'building_stage_C'][stage] ?? 'building_stage_A');
+  const h = fit(stageModel, size * 0.8);
+  stageModel.position.y += 0.08;
+  body.add(stageModel);
+  if (size >= 2) {
+    addProp(assets, body, 'resource_lumber', size * 0.36, size * 0.4, size * 0.3, 0.4);
+    addProp(assets, body, 'resource_stone', -size * 0.38, size * 0.4, size * 0.22);
+  }
+  return Math.max(h, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Granja: tierra arada, trigo instanciado que se mece y un molino.
+// ---------------------------------------------------------------------------
+
+let wheatMaterial: THREE.MeshStandardNodeMaterial | null = null;
+let wheatGeometry: THREE.BufferGeometry | null = null;
+
+function wheat(): { geo: THREE.BufferGeometry; mat: THREE.Material } {
+  if (!wheatGeometry) {
+    const stalk = new THREE.CylinderGeometry(0.02, 0.03, 0.4, 4);
+    stalk.translate(0, 0.2, 0);
+    const head = new THREE.CylinderGeometry(0.06, 0.035, 0.2, 5);
+    head.translate(0, 0.46, 0);
+    const leaf = new THREE.ConeGeometry(0.07, 0.3, 3);
+    leaf.translate(0, 0.15, 0);
+    const paint = (g: THREE.BufferGeometry, c: string) => {
+      const col = new THREE.Color(c);
+      const arr = new Float32Array(g.attributes.position!.count * 3);
+      for (let i = 0; i < arr.length; i += 3) arr.set([col.r, col.g, col.b], i);
+      g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+      return g;
+    };
+    wheatGeometry = mergeGeometries([paint(stalk, '#b9a043'), paint(head, '#f3d05c'), paint(leaf, '#9fb048')]);
+    const m = new THREE.MeshStandardNodeMaterial({ roughness: 0.8 });
+    m.colorNode = vertexColor().rgb;
+    const phase = hash(instanceIndex).mul(3.0);
+    const sway = sin(time.mul(2.1).add(phase)).mul(0.14);
+    m.positionNode = positionLocal.add(vec3(sway.mul(positionLocal.y), 0, sway.mul(positionLocal.y).mul(0.4)));
+    wheatMaterial = m;
+  }
+  return { geo: wheatGeometry, mat: wheatMaterial! };
+}
+
+function mergeGeometries(geos: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const out = new THREE.BufferGeometry();
+  const attrs = ['position', 'normal', 'color'];
+  for (const name of attrs) {
+    const arrays = geos.map((g) => (g.index ? g.toNonIndexed() : g).attributes[name]!.array as Float32Array);
+    const total = arrays.reduce((s, a) => s + a.length, 0);
+    const merged = new Float32Array(total);
+    let o = 0;
+    for (const a of arrays) {
+      merged.set(a, o);
+      o += a.length;
+    }
+    out.setAttribute(name, new THREE.BufferAttribute(merged, 3));
+  }
+  return out;
+}
+
+function buildFarm(assets: Assets, body: THREE.Group, size: number, level: number): number {
+  const soil = new THREE.Mesh(
+    cached(`soil:${size}`, () => new RoundedBoxGeometry(size - 0.12, 0.16, size - 0.12, 2, 0.06)),
+    standard('#8a5d34', 1),
+  );
+  soil.position.y = 0.02;
+  soil.receiveShadow = true;
+  body.add(soil);
+  // Surcos
+  const furrowGeo = cached(`furrow:${size}`, () => new THREE.BoxGeometry(size * 0.62, 0.05, 0.1));
+  for (let i = 0; i < 6; i++) {
+    const f = new THREE.Mesh(furrowGeo, standard('#6e4526', 1));
+    f.position.set(size * 0.12, 0.12, -size * 0.42 + i * (size * 0.84) / 5);
+    f.receiveShadow = true;
+    body.add(f);
+  }
+  const mill = assets.model('building_windmill_blue');
+  const h = fit(mill, size * 0.42);
+  mill.position.x += -size * 0.28;
+  mill.position.z += -size * 0.26;
+  mill.position.y += 0.08;
+  body.add(mill);
+
+  const { geo, mat } = wheat();
+  const rows = 9 + level * 2;
+  const perRow = 12 + level * 3;
+  const field = new THREE.InstancedMesh(geo, mat, rows * perRow);
+  const rand = seeded(level * 13 + 5);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  let n = 0;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < perRow; c++) {
+      const x = -size * 0.1 + (c / (perRow - 1)) * size * 0.54 + (rand() - 0.5) * 0.08;
+      const z = -size * 0.42 + (r / (rows - 1)) * size * 0.84 + (rand() - 0.5) * 0.08;
+      if (x < -size * 0.02 && z < 0) continue; // hueco para el molino
+      const s = 0.85 + rand() * 0.45;
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * 6.28);
+      m.compose(new THREE.Vector3(x, 0.1, z), q, new THREE.Vector3(s, s, s));
+      field.setMatrixAt(n++, m);
+    }
+  }
+  field.count = n;
+  field.castShadow = true;
+  body.add(field);
+  addProp(assets, body, 'sack', -size * 0.36, size * 0.4, size * 0.14);
+  return h;
+}
+
+// ---------------------------------------------------------------------------
+// Muros: poste en cada celda y tramos hacia los muros vecinos.
+// ---------------------------------------------------------------------------
+
+const WALL_MODELS = ['fence_wood_straight', 'fence_stone_straight', 'wall_straight'];
+
+function buildWall(assets: Assets, body: THREE.Group, level: number, mask: number): number {
+  const name = WALL_MODELS[Math.min(level, WALL_MODELS.length) - 1]!;
+  const heightK = level === 3 ? 1.0 : 0.75;
+  const segment = (length: number, thick: number, height: number, x: number, z: number, alongX: boolean) => {
+    const obj = assets.model(name);
+    const box = localBounds(obj);
+    const size = box.getSize(new THREE.Vector3());
+    const longX = size.x >= size.z;
+    const sl = length / (longX ? size.x : size.z);
+    const st = thick / (longX ? size.z : size.x);
+    const holder = new THREE.Group();
+    obj.scale.set(longX ? sl : st, height / size.y, longX ? st : sl);
+    obj.position.set(
+      -(box.min.x + size.x / 2) * obj.scale.x,
+      -box.min.y * obj.scale.y,
+      -(box.min.z + size.z / 2) * obj.scale.z,
+    );
+    holder.add(obj);
+    holder.position.set(x, 0, z);
+    if (alongX !== longX) holder.rotation.y = Math.PI / 2;
+    body.add(holder);
+  };
+  const h = heightK;
+  // Poste central, algo más alto y grueso.
+  segment(0.5, 0.5, h * 1.15, 0, 0, true);
+  if (mask & 1) segment(0.55, 0.36, h, 0.27, 0, true);
+  if (mask & 2) segment(0.55, 0.36, h, -0.27, 0, true);
+  if (mask & 4) segment(0.55, 0.36, h, 0, 0.27, false);
+  if (mask & 8) segment(0.55, 0.36, h, 0, -0.27, false);
+  return h * 1.15;
+}
+
+// ---------------------------------------------------------------------------
+// Fantasma de colocación, marco de selección y alcance de defensas.
+// ---------------------------------------------------------------------------
+
+const ghostOk = new THREE.MeshStandardMaterial({ color: '#5fe07a', transparent: true, opacity: 0.5, depthWrite: false, emissive: new THREE.Color('#1f7a33') });
+const ghostBad = new THREE.MeshStandardMaterial({ color: '#ff4a3d', transparent: true, opacity: 0.5, depthWrite: false, emissive: new THREE.Color('#7a1f1a') });
+
+export function createGhost(assets: Assets, type: BuildingType): THREE.Group {
+  const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null };
+  const g = createBuildingVisual(assets, fake).root;
+  const size = BUILDING_DEFS[type].size;
+  const base = new THREE.Mesh(cached(`ghost:${size}`, () => new THREE.BoxGeometry(size, 0.04, size)), ghostOk);
+  base.position.y = 0.03;
+  g.add(base);
+  setGhostValid(g, true);
+  return g;
+}
+
+export function setGhostValid(g: THREE.Group, valid: boolean): void {
+  const m = valid ? ghostOk : ghostBad;
+  g.traverse((o) => {
+    if (o instanceof THREE.Mesh || o instanceof THREE.InstancedMesh) {
+      o.material = m;
+      o.castShadow = false;
+    }
+  });
+}
+
+const selectionMat = new THREE.MeshBasicMaterial({ color: '#ffe066', transparent: true, opacity: 0.95 });
+
+export function createSelectionFrame(size: number): THREE.Group {
+  const g = new THREE.Group();
+  const t = 0.1;
+  const h = size / 2 + 0.08;
+  for (const [w, d, x, z] of [
+    [size + 0.26, t, 0, -h],
+    [size + 0.26, t, 0, h],
+    [t, size + 0.26, -h, 0],
+    [t, size + 0.26, h, 0],
+  ] as const) {
+    const mesh = new THREE.Mesh(cached(`sel:${w}:${d}`, () => new THREE.BoxGeometry(w, 0.05, d)), selectionMat);
+    mesh.position.set(x, 0.05, z);
+    g.add(mesh);
+  }
+  return g;
+}
+
+const ringMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.55, depthWrite: false });
+const ringFillMat = new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.08, depthWrite: false });
+
+export function createRangeRing(radius: number): THREE.Mesh {
+  const ring = new THREE.Mesh(cached(`ring:${radius}`, () => new THREE.RingGeometry(radius - 0.08, radius, 96)), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.06;
+  const fill = new THREE.Mesh(cached(`disc:${radius}`, () => new THREE.CircleGeometry(radius, 96)), ringFillMat);
+  fill.position.z = -0.001;
+  ring.add(fill);
+  return ring;
+}

@@ -8,6 +8,7 @@ import {
   type GameState,
 } from '@cow/shared';
 import { RESOURCE_ICONS, fmtNum } from './format';
+import { AnimatedNumber } from './AnimatedNumber';
 
 export function TopBar({ state }: { state: GameState }) {
   const cap = getStorageCapacity(state);
@@ -20,10 +21,10 @@ export function TopBar({ state }: { state: GameState }) {
       </div>
       {RESOURCES.map((r) => (
         <div class="stat resource" key={r} title={RESOURCE_NAMES[r]}>
-          <span>{RESOURCE_ICONS[r]}</span>
+          <span class="res-icon">{RESOURCE_ICONS[r]}</span>
           <div class="resource-body">
             <div>
-              <b>{fmtNum(state.resources[r])}</b>
+              <AnimatedNumber value={state.resources[r]} />
               <small> / {fmtNum(cap[r])}</small>
             </div>
             <div class="meter">

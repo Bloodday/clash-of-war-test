@@ -8,10 +8,17 @@
     "build": "pnpm --filter @cow/client build",
     "preview": "pnpm --filter @cow/client preview",
     "test": "pnpm --filter @cow/shared test",
-    "typecheck": "tsc -p packages/shared && tsc -p packages/client"
+    "typecheck": "tsc -p packages/shared && tsc -p packages/client",
+    "assets": "node tools/build-assets.mjs",
+    "smoke": "node tools/smoke-webgpu.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "meshoptimizer": "^1.3.0",
+    "playwright-core": "^1.63.0"
   },
   "packageManager": "pnpm@10.33.0"
 }

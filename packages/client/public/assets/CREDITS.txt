@@ -1,0 +1,10 @@
+Modelos 3D y animaciones
+========================
+
+KayKit : Medieval Hexagon Pack (1.0)
+KayKit : Character Pack Adventures (1.0)
+Creados por Kay Lousberg — www.kaylousberg.com
+Licencia: Creative Commons Zero (CC0) — http://creativecommons.org/publicdomain/zero/1.0/
+
+Los archivos .glb de esta carpeta se generan con tools/build-assets.mjs
+a partir de los packs originales (selección de modelos, animaciones y compresión meshopt).

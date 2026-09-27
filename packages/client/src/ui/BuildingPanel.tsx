@@ -46,8 +46,13 @@ export function BuildingPanel({ game, ui, building: b }: Props) {
   return (
     <div class="side-panel panel">
       <div class="panel-header">
+        {ui.thumbnails.get(`${b.type}:${Math.max(1, b.level)}`) && (
+          <img class="panel-thumb" src={ui.thumbnails.get(`${b.type}:${Math.max(1, b.level)}`)} alt="" />
+        )}
         <h2>
-          {def.name} <small>{b.level > 0 ? `Nivel ${b.level}` : 'En obras'}</small>
+          {def.name}
+          <small>{b.level > 0 ? `Nivel ${b.level}` : 'En obras'}</small>
+          {b.level > 0 && <span class="stars">{'★'.repeat(b.level)}<span class="off">{'★'.repeat(def.levels.length - b.level)}</span></span>}
         </h2>
         <button class="icon" onClick={() => ui.select(null)} title="Cerrar">
           ✕
@@ -87,7 +92,7 @@ export function BuildingPanel({ game, ui, building: b }: Props) {
       )}
 
       <section class="actions">
-        {next ? (
+        {b.level === 0 ? null : next ? (
           <button
             class="primary"
             disabled={b.construction !== null || getTownHallLevel(state) < next.requiresTownHall}

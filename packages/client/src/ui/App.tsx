@@ -7,6 +7,7 @@ import { TopBar } from './TopBar';
 import { BuildMenu } from './BuildMenu';
 import { BuildingPanel } from './BuildingPanel';
 import { VillagersPanel } from './VillagersPanel';
+import { QUALITY_LABELS, type Quality } from '../render/postfx';
 
 const SPEEDS = [1, 5, 20];
 
@@ -33,6 +34,18 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
 
       <div class="corner panel">
         {ui.backend && <span class="badge" title="Backend de render">{ui.backend}</span>}
+        <select
+          class="quality"
+          title="Calidad gráfica"
+          value={ui.quality}
+          onChange={(e) => ui.setQuality((e.target as HTMLSelectElement).value as Quality)}
+        >
+          {(Object.keys(QUALITY_LABELS) as Quality[]).map((q) => (
+            <option key={q} value={q}>
+              Calidad {QUALITY_LABELS[q]}
+            </option>
+          ))}
+        </select>
         <span class="muted">Velocidad</span>
         {SPEEDS.map((s) => (
           <button
@@ -65,7 +78,9 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
       {villagersOpen && <VillagersPanel state={state} ui={ui} onClose={() => setVillagersOpen(false)} />}
 
       <div class="bottom">
-        <div class="hint">{hint}</div>
+        <div class="hint" key={hint}>
+          {hint}
+        </div>
         <div class="bottom-buttons">
           <button class="big" onClick={() => setVillagersOpen(!villagersOpen)}>
             👥 Aldeanos
