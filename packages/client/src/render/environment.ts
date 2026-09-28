@@ -27,7 +27,7 @@ import {
   vec3,
   vertexColor,
 } from 'three/tsl';
-import { GRID_SIZE } from '@cow/shared';
+import { CAMP_SLOTS, GRID_SIZE } from '@cow/shared';
 import type { Assets } from './assets';
 import { InstancedModel } from './instancing';
 import { fbm, seeded, smoothstep as ss } from './noise';
@@ -230,8 +230,11 @@ export class Environment {
       m.compose(new THREE.Vector3(x, terrainHeight(x, z) - sink, z), q, new THREE.Vector3(scale, scale, scale));
       im.add(m);
     };
+    // Fuera de la aldea, del lago y de los claros donde acampan los monstruos.
     const free = (x: number, z: number, margin: number) =>
-      Math.max(Math.abs(x), Math.abs(z)) > HALF + margin && lakeMask(x, z) < 0.02;
+      Math.max(Math.abs(x), Math.abs(z)) > HALF + margin &&
+      lakeMask(x, z) < 0.02 &&
+      CAMP_SLOTS.every((c) => Math.hypot(x - c.x, z - c.z) > 5.5);
 
     // Bosque
     const treeKinds = ['trees_A_large', 'trees_A_medium', 'trees_B_large', 'trees_B_medium', 'tree_single_A', 'tree_single_B', 'trees_A_small', 'trees_B_small'];

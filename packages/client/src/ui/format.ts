@@ -38,9 +38,11 @@ export const ERROR_MESSAGES: Record<CommandError, string> = {
   noHousing: 'Construye o mejora casas para alojar a más aldeanos.',
   notInn: 'Los aldeanos se reclutan en la posada.',
   roleLocked: 'Un aldeano formado no puede cambiar de oficio.',
+  noPatients: 'No hay heridos esperando cura.',
+  notInfirmary: 'Solo se puede sanar en la enfermería.',
 };
 
-const FEMININE = new Set<BuildingType>(['house', 'farm', 'goldMine', 'archerTower']);
+const FEMININE = new Set<BuildingType>(['house', 'farm', 'goldMine', 'archerTower', 'inn', 'infirmary', 'wall']);
 
 /** Concordancia de género: participio("house", "construid") → "construida". */
 export function participle(type: BuildingType, stem: string): string {
@@ -77,8 +79,12 @@ export function taskLabel(state: GameState, v: Villager): string {
   switch (t.kind) {
     case 'idle':
       return !v.role ? 'Esperando formación' : v.role === 'builder' ? 'Libre' : 'En guardia';
-    case 'wounded':
-      return `Herido · se recupera en ${fmtTime(t.remainingTicks / TICK_RATE)}`;
+    case 'wounded': {
+      const b = state.buildings.find((x) => x.id === t.infirmaryId);
+      const job = b?.healing;
+      if (job?.patientIds.includes(v.id)) return `En curación · ${fmtTime(job.remainingTicks / TICK_RATE)}`;
+      return 'Herido en la enfermería';
+    }
     case 'repair':
       return `Reparando · ${bName(t.buildingId)}`;
     case 'build':

@@ -7,23 +7,34 @@ import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 // empaquetados por tools/build-assets.mjs.
 
 const BASE = `${import.meta.env.BASE_URL}assets/`;
-export const CHARACTERS = ['Knight', 'Barbarian', 'Mage', 'Rogue_Hooded', 'Rogue'] as const;
+export const CHARACTERS = [
+  'Knight',
+  'Barbarian',
+  'Mage',
+  'Rogue_Hooded',
+  'Rogue',
+  'Skeleton_Minion',
+  'Skeleton_Warrior',
+  'Skeleton_Rogue',
+  'Skeleton_Mage',
+] as const;
 export type CharacterName = (typeof CHARACTERS)[number];
 
 export class Assets {
   private constructor(
     private models: Map<string, THREE.Object3D>,
     private characters: Map<string, THREE.Object3D>,
+    private gearModels: Map<string, THREE.Object3D>,
     readonly clips: Map<string, THREE.AnimationClip>,
   ) {}
 
   static async load(onProgress?: (fraction: number) => void): Promise<Assets> {
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
-    const files = ['village.glb', 'animations.glb', ...CHARACTERS.map((c) => `char_${c}.glb`)];
+    const files = ['village.glb', 'animations.glb', 'anim_skeletons.glb', 'skeleton_gear.glb', ...CHARACTERS.map((c) => `char_${c}.glb`)];
     const progress = files.map(() => 0);
     const report = () => onProgress?.(progress.reduce((a, b) => a + b, 0) / files.length);
-    const [village, anims, ...chars] = await Promise.all(
+    const [village, anims, skelAnims, gear, ...chars] = await Promise.all(
       files.map((f, i) =>
         loader.loadAsync(BASE + f, (e) => {
           if (e.total) progress[i] = e.loaded / e.total;
@@ -45,8 +56,15 @@ export class Assets {
       prepare(root);
       characters.set(CHARACTERS[i]!, root);
     });
-    const clips = new Map(anims!.animations.map((c) => [c.name, c]));
-    return new Assets(models, characters, clips);
+    // Las armas conservan su transformación original: su origen es la empuñadura.
+    const gearModels = new Map<string, THREE.Object3D>();
+    for (const child of [...gear!.scene.children]) {
+      prepare(child);
+      gearModels.set(child.name, child);
+    }
+    // Aventureros y esqueletos comparten rig: los clips valen para todos.
+    const clips = new Map([...anims!.animations, ...skelAnims!.animations].map((c) => [c.name, c]));
+    return new Assets(models, characters, gearModels, clips);
   }
 
   has(name: string): boolean {
@@ -73,6 +91,13 @@ export class Assets {
     const src = this.characters.get(name);
     if (!src) throw new Error(`Personaje desconocido: ${name}`);
     return SkeletonUtils.clone(src);
+  }
+
+  /** Arma o escudo de esqueleto, para colgarlo de un hueso `handslot`. */
+  gear(name: string): THREE.Object3D {
+    const src = this.gearModels.get(name);
+    if (!src) throw new Error(`Equipo desconocido: ${name}`);
+    return src.clone(true);
   }
 
   clip(name: string): THREE.AnimationClip {

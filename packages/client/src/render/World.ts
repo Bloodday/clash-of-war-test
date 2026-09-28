@@ -5,12 +5,15 @@ import {
   GRID_SIZE,
   TICK_RATE,
   applyDamage,
+  canAfford,
   collectableAmount,
+  countBuildings,
   getBuildingProduction,
   getTrainees,
   isAreaFree,
   isDamaged,
   isOperational,
+  maxBuildings,
   maxHp,
   producedResource,
   producerCapacity,
@@ -38,6 +41,7 @@ import { Particles } from './particles';
 import { PostFX, type Quality } from './postfx';
 import { VillagerAgents } from './villagers';
 import { BattleView } from './battleView';
+import { CampViews } from './camps';
 import type { BattleController } from '../game/BattleController';
 
 interface BuildingView {
@@ -88,6 +92,10 @@ export class World {
   private intro = { t: 0, duration: 3.2, from: new THREE.Vector3(-38, 58, 70) };
   private firstSync = true;
   private battleView: BattleView | null = null;
+  private camps: CampViews;
+  /** Muralla arrastrando: celda inicial y fantasmas de la línea. */
+  private wallDrag: { start: { x: number; y: number }; cells: { x: number; y: number }[] } | null = null;
+  private wallGhosts: THREE.Group[] = [];
   private lastFullWarning = 0;
   private lastHoverCheck = 0;
   private shake = 0;
@@ -105,7 +113,8 @@ export class World {
     this.env = new Environment(this.scene, assets);
     this.villagers = new VillagerAgents(assets, this.particles);
     this.villagers.onArrive = (v, at) => this.overlays.floatText(at.clone().setY(1.6), `¡Llega ${v.name}!`, 'good');
-    this.scene.add(this.buildingsRoot, this.villagers.group, this.particles.group);
+    this.camps = new CampViews(assets, this.particles);
+    this.scene.add(this.buildingsRoot, this.villagers.group, this.particles.group, this.camps.group);
     this.overlays = new Overlays(overlayRoot, this.camera, container);
   }
 
@@ -162,6 +171,9 @@ export class World {
     this.ui.setMode({ kind: 'idle' });
     this.buildingsRoot.visible = false;
     this.villagers.group.visible = false;
+    this.camps.group.visible = false;
+    this.overlays.setMarkers([]);
+    this.cancelWallDrag();
     if (this.selection) {
       this.scene.remove(this.selection.frame);
       if (this.selection.ring) this.scene.remove(this.selection.ring);
@@ -202,6 +214,7 @@ export class World {
     this.battleView = null;
     this.buildingsRoot.visible = true;
     this.villagers.group.visible = true;
+    this.camps.group.visible = true;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
     this.controls.target.set(0, 0, 0);
     this.camera.position.copy(HOME_CAMERA);
@@ -236,6 +249,7 @@ export class World {
       this.syncSelection(dt);
       this.syncGhost();
       this.villagers.update(this.game.state, dt * this.game.speed ** 0.5);
+      this.camps.update(this.game.state, dt);
     }
     this.particles.update(dt);
     this.updateCamera(dt);
@@ -298,7 +312,8 @@ export class World {
 
   private clampCamera(): void {
     const t = this.controls.target;
-    const lim = GRID_SIZE / 2 + 6;
+    // En la aldea se puede llegar hasta los campamentos del bosque.
+    const lim = GRID_SIZE / 2 + (this.battleView ? 6 : 14);
     const cx = THREE.MathUtils.clamp(t.x, -lim, lim);
     const cz = THREE.MathUtils.clamp(t.z, -lim, lim);
     if (cx !== t.x || cz !== t.z) {
@@ -549,6 +564,14 @@ export class World {
   private syncGhost(): void {
     const target = this.ghostTarget();
     this.env.setGridVisible(target !== null);
+    // Colocando murallas, el botón izquierdo dibuja la línea en vez de desplazar la cámara.
+    const walls = target?.type === 'wall' && this.ui.mode.kind === 'place';
+    this.controls.mouseButtons.LEFT = walls ? null : THREE.MOUSE.PAN;
+    this.syncWallLine();
+    if (this.wallDrag && this.ghost) {
+      this.ghost.group.visible = false;
+      return;
+    }
     const key = target ? target.type : '';
     if (this.ghost && this.ghost.key !== key) {
       this.scene.remove(this.ghost.group);
@@ -571,9 +594,90 @@ export class World {
     setGhostValid(this.ghost.group, isAreaFree(this.game.state, cell.x, cell.y, size, target.ignoreId));
   }
 
+  // ---------------------------------------------------------------------------
+  // Murallas en línea
+  // ---------------------------------------------------------------------------
+
+  /** Celdas en línea recta (horizontal o vertical) desde el inicio hasta el cursor. */
+  private wallLine(start: { x: number; y: number }, end: { x: number; y: number }): { x: number; y: number }[] {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const alongX = Math.abs(dx) >= Math.abs(dy);
+    const n = Math.min(GRID_SIZE, alongX ? Math.abs(dx) : Math.abs(dy));
+    const sx = Math.sign(alongX ? dx : 0);
+    const sy = Math.sign(alongX ? 0 : dy);
+    const out: { x: number; y: number }[] = [];
+    for (let i = 0; i <= n; i++) out.push({ x: start.x + sx * i, y: start.y + sy * i });
+    return out;
+  }
+
+  /** Cuántos tramos más se pueden pagar y caben en el límite del ayuntamiento. */
+  private wallBudget(): number {
+    const state = this.game.state;
+    const room = maxBuildings(state, 'wall') - countBuildings(state, 'wall');
+    const cost = BUILDING_DEFS.wall.levels[0]!.cost;
+    let afford = 0;
+    const probe = { ...state, resources: { ...state.resources } };
+    while (afford < room && canAfford(probe, cost)) {
+      for (const [r, v] of Object.entries(cost)) probe.resources[r as keyof typeof probe.resources] -= v ?? 0;
+      afford++;
+    }
+    return Math.max(0, Math.min(room, afford));
+  }
+
+  private syncWallLine(): void {
+    const drag = this.wallDrag;
+    if (drag) {
+      const cur = this.hoverCell('wall');
+      if (cur) drag.cells = this.wallLine(drag.start, cur);
+    }
+    const cells = drag?.cells ?? [];
+    while (this.wallGhosts.length < cells.length) {
+      const g = createGhost(this.assets, 'wall');
+      this.scene.add(g);
+      this.wallGhosts.push(g);
+    }
+    let budget = drag ? this.wallBudget() : 0;
+    this.wallGhosts.forEach((g, i) => {
+      const c = cells[i];
+      g.visible = c !== undefined;
+      if (!c) return;
+      const p = cellToWorld(c.x, c.y, 1);
+      g.position.set(p.x, 0, p.z);
+      const free = isAreaFree(this.game.state, c.x, c.y, 1);
+      setGhostValid(g, free && budget > 0);
+      if (free) budget--;
+    });
+  }
+
+  private cancelWallDrag(): void {
+    this.wallDrag = null;
+    for (const g of this.wallGhosts) g.visible = false;
+  }
+
+  /** Construye la línea de muralla arrastrada: salta las celdas ocupadas y para al quedarse sin recursos. */
+  private placeWallLine(): void {
+    const cells = this.wallDrag?.cells ?? [];
+    this.cancelWallDrag();
+    let placed = 0;
+    let error: string | null = null;
+    for (const c of cells) {
+      if (!isAreaFree(this.game.state, c.x, c.y, 1)) continue;
+      const res = this.game.dispatch({ type: 'placeBuilding', building: 'wall', x: c.x, y: c.y });
+      if (res.ok) placed++;
+      else if (res.error !== 'areaBlocked') {
+        error = ERROR_MESSAGES[res.error];
+        break;
+      }
+    }
+    if (error) this.ui.toast(placed ? `${placed} tramos de muralla colocados. ${error}` : error, 'error');
+    else if (placed > 1) this.ui.toast(`${placed} tramos de muralla colocados`);
+  }
+
   private updateOverlays(dt: number): void {
     const items: OverlayItem[] = [];
     const state = this.game.state;
+    this.overlays.setMarkers(this.camps.markers((id) => this.ui.attackCamp(id)));
     for (const b of state.buildings) {
       const view = this.views.get(b.id);
       if (!view) continue;
@@ -656,6 +760,11 @@ export class World {
       this.setPointer(e);
       this.down = { x: e.clientX, y: e.clientY, button: e.button };
       this.battleView?.pointerDown(e);
+      const mode = this.ui.mode;
+      if (!this.battleView && e.button === 0 && mode.kind === 'place' && mode.building === 'wall') {
+        const start = this.hoverCell('wall');
+        if (start) this.wallDrag = { start, cells: [start] };
+      }
     });
     // En batalla el arrastre con clic izquierdo es selección: se escucha en window para no perder el final.
     window.addEventListener('pointermove', (e) => {
@@ -676,6 +785,12 @@ export class World {
         this.battleView.pointerUp(e, click);
         return;
       }
+      if (this.wallDrag && e.button === 0) {
+        this.setPointer(e);
+        this.syncWallLine();
+        this.placeWallLine();
+        return;
+      }
       if (!click) return;
       this.setPointer(e);
       if (e.button === 0) this.onClick(e.shiftKey);
@@ -683,6 +798,7 @@ export class World {
     });
     window.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
+      this.cancelWallDrag();
       if (this.battleView) {
         this.ui.deploy = null;
         this.battleView.clearSelection();
@@ -702,6 +818,7 @@ export class World {
   }
 
   private cancel(): void {
+    this.cancelWallDrag();
     if (this.ui.mode.kind !== 'idle') this.ui.setMode({ kind: 'idle' });
     else this.ui.select(null);
   }
@@ -767,7 +884,17 @@ export class World {
       else this.ui.setMode({ kind: 'idle' });
       return;
     }
-    this.ui.select(this.pickBuilding());
+    const building = this.pickBuilding(false);
+    if (building === null) {
+      // ¿Un campamento de monstruos?
+      this.raycaster.setFromCamera(this.pointer, this.camera);
+      const camp = this.camps.pick(this.raycaster);
+      if (camp !== null) {
+        this.ui.attackCamp(camp);
+        return;
+      }
+    }
+    this.ui.select(building ?? this.pickBuilding());
   }
 }
 

@@ -6,6 +6,7 @@ import {
   createBattle,
   executeBattleCommand,
   generateEnemyBase,
+  generateMonsterCamp,
   getTownHallLevel,
   stepBattle,
   type BattleCommand,
@@ -22,8 +23,13 @@ export interface BattleSummary {
   stars: number;
   destruction: number;
   gained: Record<ResourceId, number>;
-  fallen: string[];
+  /** Caídos que quedaron en la enfermería. */
+  wounded: string[];
+  /** Caídos sin cama libre: han muerto. */
+  dead: string[];
   reason: string;
+  /** Campamento de monstruos arrasado (desaparece del mapa). */
+  campCleared: boolean;
 }
 
 /**
@@ -43,13 +49,16 @@ export class BattleController {
   private pending: BattleEvent[] = [];
   private listeners = new Set<() => void>();
 
+  /** Con `campId` se ataca ese campamento de monstruos; si no, una aldea enemiga. */
   constructor(
     private game: GameController,
     readonly seed: number,
+    readonly campId: number | null = null,
   ) {
-    const base = generateEnemyBase(seed, Math.max(1, getTownHallLevel(game.state)));
+    const camp = campId !== null ? game.state.camps.find((c) => c.id === campId) : undefined;
+    const base = camp ? generateMonsterCamp(camp.seed, camp.level) : generateEnemyBase(seed, Math.max(1, getTownHallLevel(game.state)));
     this.loot = baseLoot(base);
-    this.state = createBattle(base, availableArmy(game.state));
+    this.state = createBattle(base, availableArmy(game.state), camp ? camp.id : null);
   }
 
   update(realDtMs: number): void {
@@ -95,9 +104,18 @@ export class BattleController {
   /** Aplica el resultado a la aldea (una sola vez). */
   private finish(): void {
     const result = this.state.result!;
-    const { gained } = applyBattleResult(this.game.state, result);
-    const fallen = result.fallen.map((id) => this.game.state.villagers.find((v) => v.id === id)?.name ?? '?');
-    this.summary = { stars: result.stars, destruction: result.destruction, gained, fallen, reason: result.reason };
+    // Los nombres se leen antes: los muertos desaparecen de la aldea al aplicar el resultado.
+    const names = new Map(this.game.state.villagers.map((v) => [v.id, v.name]));
+    const { gained, wounded, dead } = applyBattleResult(this.game.state, result);
+    this.summary = {
+      stars: result.stars,
+      destruction: result.destruction,
+      gained,
+      wounded: wounded.map((id) => names.get(id) ?? '?'),
+      dead: dead.map((id) => names.get(id) ?? '?'),
+      reason: result.reason,
+      campCleared: result.kind === 'camp' && result.cleared,
+    };
     this.game.save();
   }
 

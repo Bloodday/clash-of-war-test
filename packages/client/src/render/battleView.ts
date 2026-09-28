@@ -5,21 +5,24 @@ import {
   GRID_SIZE,
   RESOURCES,
   canDeploy,
+  isMonster,
   type BattleBuilding,
   type BattleEvent,
   type BattleUnit,
   type Building,
+  type BuildingType,
   type Projectile,
 } from '@cow/shared';
 import type { BattleController } from '../game/BattleController';
 import type { UiStore } from '../ui/UiStore';
 import { RESOURCE_ICONS, fmtNum } from '../ui/format';
 import type { Assets } from './assets';
-import { createBuildingVisual, disposeVisual, teamModels, type BuildingVisual } from './buildings';
+import { createBuildingVisual, createCampVisual, disposeVisual, teamModels, type BuildingVisual } from './buildings';
+import { createBoulder, createCampfire, createCatapult, type Catapult } from './props';
 import { hopScale, popScale } from './fx';
 import type { OverlayItem, Overlays } from './overlays';
 import type { Particles } from './particles';
-import { BODY_PART, lookFor } from './villagers';
+import { dressCharacter, lookFor } from './villagers';
 
 // Vista 3D y controles RTS de una batalla. La simulación vive en @cow/shared;
 // aquí solo se dibuja su estado y se traducen los clics a comandos.
@@ -56,6 +59,9 @@ interface UnitView {
   barFill: THREE.Mesh;
   deadFor: number;
   swing: number;
+  /** Solo las catapultas: la máquina que empuja su dotación. */
+  catapult: Catapult | null;
+  monster: boolean;
 }
 
 interface BuildingView {
@@ -69,8 +75,22 @@ const ATTACK_CLIPS: Record<string, string[]> = {
   warrior: ['1H_Melee_Attack_Chop', '1H_Melee_Attack_Slice_Diagonal', '1H_Melee_Attack_Stab'],
   archer: ['2H_Ranged_Shoot'],
   healer: ['Spellcast_Shoot'],
+  catapult: ['Interact'],
+  minion: ['1H_Melee_Attack_Chop', '1H_Melee_Attack_Stab'],
+  skeletonWarrior: ['1H_Melee_Attack_Chop', '1H_Melee_Attack_Slice_Diagonal'],
+  skeletonRogue: ['2H_Ranged_Shoot'],
+  skeletonMage: ['Spellcast_Shoot', 'Spellcast_Summon'],
+  boneLord: ['1H_Melee_Attack_Jump_Chop', '1H_Melee_Attack_Chop'],
 };
-const READY_CLIP: Record<string, string> = { warrior: 'Idle', archer: '2H_Ranged_Aiming', healer: 'Idle' };
+const READY_CLIP: Record<string, string> = {
+  warrior: 'Idle',
+  archer: '2H_Ranged_Aiming',
+  healer: 'Idle',
+  catapult: 'Idle',
+  skeletonRogue: '2H_Ranged_Aiming',
+};
+/** Distancia de la dotación detrás de su catapulta. */
+const CREW_OFFSET = -0.62;
 
 // Geometrías y materiales compartidos por todas las unidades.
 const discGeo = new THREE.CircleGeometry(0.3, 24).rotateX(-Math.PI / 2);
@@ -105,6 +125,15 @@ function healOrb(): THREE.Mesh {
   return new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), m);
 }
 
+function magicOrb(): THREE.Mesh {
+  const m = new THREE.MeshStandardMaterial({ color: '#e2b8ff', emissive: new THREE.Color('#b24dff'), emissiveIntensity: 3 });
+  return new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), m);
+}
+
+/** Altura del arco de cada proyectil (proporcional a la distancia). */
+const ARC: Record<Projectile['kind'], number> = { arrow: 0.12, bolt: 0.12, heal: 0.12, boulder: 0.42, magic: 0.05 };
+const PROJECTILE_FX: Partial<Record<Projectile['kind'], string>> = { heal: '#9dffa0', magic: '#c77dff' };
+
 export class BattleView {
   readonly group = new THREE.Group();
   readonly selected = new Set<number>();
@@ -125,6 +154,7 @@ export class BattleView {
   private box: { x0: number; y0: number; x1: number; y1: number } | null = null;
   private deploying: { last: THREE.Vector3 | null; time: number } | null = null;
   private elapsed = 0;
+  private campfire: { obj: THREE.Group; clock: number } | null = null;
 
   constructor(
     private ctx: BattleContext,
@@ -144,6 +174,13 @@ export class BattleView {
     this.marker = new THREE.Mesh(new THREE.RingGeometry(0.3, 0.45, 32).rotateX(-Math.PI / 2), ringMat.clone());
     this.marker.visible = false;
     this.group.add(this.zone, this.marker);
+    if (battle.state.kind === 'camp') {
+      // Hoguera en el claro central del campamento.
+      const obj = createCampfire();
+      obj.scale.setScalar(2.4);
+      this.group.add(obj);
+      this.campfire = { obj, clock: 0 };
+    }
     this.boxEl = document.createElement('div');
     this.boxEl.className = 'box-select';
     document.body.appendChild(this.boxEl);
@@ -167,6 +204,14 @@ export class BattleView {
     for (const e of this.battle.takeEvents()) this.onEvent(e);
     this.sync(dt);
     this.updateZone(dt);
+    if (this.campfire) {
+      this.campfire.clock -= dt;
+      if (this.campfire.clock <= 0) {
+        this.campfire.clock = 0.07;
+        this.ctx.particles.fire(new THREE.Vector3((Math.random() - 0.5) * 0.6, 0.3, (Math.random() - 0.5) * 0.6), 1.3);
+        if (Math.random() < 0.2) this.ctx.particles.smoke(new THREE.Vector3(0, 1.2, 0), 0.9);
+      }
+    }
     if (this.markerT < 1) {
       this.markerT += dt / 0.6;
       const s = 1 + this.markerT * 0.8;
@@ -188,18 +233,24 @@ export class BattleView {
           this.group.remove(view.visual.root);
           disposeVisual(view.visual);
         }
-        const fake: Building = {
-          id: b.id,
-          type: b.type,
-          x: b.x,
-          y: b.y,
-          level: b.level,
-          construction: null,
-          hp: b.destroyed ? 0 : b.hp,
-          stored: 0,
-          recruits: [],
-        };
-        const visual = createBuildingVisual(this.models, fake, b.type === 'wall' ? this.wallMask(b) : 0);
+        let visual: BuildingVisual;
+        if (b.type === 'campTent' || b.type === 'campChest' || b.type === 'campTotem') {
+          visual = createCampVisual(this.ctx.assets, b.type, b.size, b.destroyed, b.id);
+        } else {
+          const fake: Building = {
+            id: b.id,
+            type: b.type as BuildingType,
+            x: b.x,
+            y: b.y,
+            level: b.level,
+            construction: null,
+            hp: b.destroyed ? 0 : b.hp,
+            stored: 0,
+            recruits: [],
+            healing: null,
+          };
+          visual = createBuildingVisual(this.models, fake, b.type === 'wall' ? this.wallMask(b) : 0);
+        }
         const p = toWorld(b.x + b.size / 2, b.y + b.size / 2);
         visual.root.position.copy(p);
         view = { key, visual, anim: view ? { kind: 'pop', t: 0, duration: 0.6 } : null, fxClock: 0 };
@@ -220,7 +271,8 @@ export class BattleView {
       alive.add(p.id);
       let pv = this.projectiles.get(p.id);
       if (!pv) {
-        const obj = p.kind === 'heal' ? healOrb() : arrowMesh(p.kind === 'arrow' ? '#8a5a2b' : '#3b3b44');
+        const obj =
+          p.kind === 'heal' ? healOrb() : p.kind === 'magic' ? magicOrb() : p.kind === 'boulder' ? createBoulder() : arrowMesh(p.kind === 'arrow' ? '#8a5a2b' : '#3b3b44');
         const target = this.targetPos(p.targetId);
         const total = target ? Math.hypot(target.x - p.sx, target.y - p.sy) : 1;
         pv = { obj, kind: p.kind, total: Math.max(0.5, total) };
@@ -233,11 +285,16 @@ export class BattleView {
       const remaining = target ? Math.hypot(target.x - p.x, target.y - p.y) : 0;
       const f = Math.min(1, traveled / Math.max(0.01, traveled + remaining));
       const endH = target?.h ?? 0.5;
-      const h = p.height + (endH - p.height) * f + Math.sin(f * Math.PI) * pv.total * 0.12;
+      const h = p.height + (endH - p.height) * f + Math.sin(f * Math.PI) * pv.total * ARC[p.kind];
       const next = toWorld(p.x, p.y, h);
-      if (pv.obj.position.distanceToSquared(next) > 1e-6) pv.obj.lookAt(next);
+      if (p.kind === 'boulder') {
+        pv.obj.rotation.x += dt * 8;
+        pv.obj.rotation.z += dt * 5;
+      } else if (pv.obj.position.distanceToSquared(next) > 1e-6) pv.obj.lookAt(next);
       pv.obj.position.copy(next);
-      if (p.kind === 'heal' && Math.random() < dt * 30) this.ctx.particles.magic(next, '#9dffa0');
+      const tint = PROJECTILE_FX[p.kind];
+      if (tint && Math.random() < dt * 30) this.ctx.particles.magic(next, tint);
+      if (p.kind === 'boulder' && Math.random() < dt * 20) this.ctx.particles.dust(next, 0.05, 1);
     }
     for (const [id, pv] of this.projectiles) {
       if (!alive.has(id)) {
@@ -264,7 +321,7 @@ export class BattleView {
 
   private animateBuilding(b: BattleBuilding, view: BuildingView, dt: number): void {
     const v = view.visual;
-    v.update(dt, b.type === 'archerTower' && !b.destroyed);
+    v.update(dt, (b.type === 'archerTower' || b.type === 'campTotem') && !b.destroyed);
     if (view.anim) {
       view.anim.t += dt / view.anim.duration;
       const [sxz, sy] = view.anim.kind === 'pop' ? popScale(view.anim.t) : hopScale(view.anim.t);
@@ -292,17 +349,18 @@ export class BattleView {
 
   private spawnUnit(u: BattleUnit): UnitView {
     const look = lookFor({ role: u.role, roleLevel: u.level });
-    const model = this.ctx.assets.character(look.character);
-    model.scale.setScalar(SCALE);
-    model.traverse((o) => {
-      if (o instanceof THREE.Mesh || o instanceof THREE.SkinnedMesh) {
-        o.visible = BODY_PART.test(o.name) || look.show.includes(o.name);
-        o.castShadow = true;
-        o.frustumCulled = false;
-      }
-    });
+    const model = dressCharacter(this.ctx.assets, look, SCALE);
     const root = new THREE.Group();
     root.add(model);
+    let catapult: Catapult | null = null;
+    if (u.role === 'catapult') {
+      // La dotación empuja la máquina desde atrás.
+      catapult = createCatapult();
+      catapult.root.scale.setScalar(0.72 + u.level * 0.06);
+      catapult.root.position.z = 0.12;
+      model.position.z = CREW_OFFSET;
+      root.add(catapult.root);
+    }
     const disc = new THREE.Mesh(discGeo, discMat[u.side]);
     disc.position.y = 0.02;
     const selection = new THREE.Mesh(ringGeo, ringMat);
@@ -313,7 +371,7 @@ export class BattleView {
     const barFill = new THREE.Mesh(barGeo, barMat[u.side]);
     barFill.position.z = 0.001;
     bar.add(bg, barFill);
-    bar.position.y = 1.05;
+    bar.position.y = look.scale && look.scale > 1.2 ? 1.5 : 1.05;
     bar.renderOrder = 20;
     bg.renderOrder = 20;
     barFill.renderOrder = 21;
@@ -334,7 +392,10 @@ export class BattleView {
       barFill,
       deadFor: 0,
       swing: 0,
+      catapult,
+      monster: isMonster(u.role),
     };
+    if (view.monster && u.side === 'defender') this.play(view, 'Idle_Combat');
     this.units.set(u.id, view);
     return view;
   }
@@ -358,7 +419,12 @@ export class BattleView {
 
   private animateUnit(u: BattleUnit, view: UnitView, dt: number): void {
     const target = toWorld(u.x, u.y);
+    const before = view.root.position.clone();
     view.root.position.lerp(target, Math.min(1, dt * 14));
+    if (view.catapult) {
+      view.catapult.roll(before.distanceTo(view.root.position));
+      view.catapult.update(dt);
+    }
     let d = u.facing - view.root.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     view.root.rotation.y += d * Math.min(1, dt * 12);
@@ -373,7 +439,8 @@ export class BattleView {
     view.bar.quaternion.premultiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -view.root.rotation.y, 0)));
 
     if (u.state === 'dead') {
-      if (view.deadFor === 0) this.play(view, 'Death_A', true);
+      if (view.deadFor === 0) this.play(view, view.monster ? 'Death_C_Skeletons' : 'Death_A', true);
+      if (view.catapult) view.catapult.root.rotation.z = Math.min(0.5, view.deadFor * 2);
       view.deadFor += dt;
       if (view.deadFor > 2.5) view.root.position.y = -Math.min(0.8, (view.deadFor - 2.5) * 0.4);
       if (view.deadFor > 5) view.root.visible = false;
@@ -388,10 +455,17 @@ export class BattleView {
       const clip = clips[view.swing++ % clips.length]!;
       this.play(view, clip, true, 1.2);
       view.busyUntil = now + this.ctx.assets.clip(clip).duration / 1.2;
+      view.catapult?.fire();
     } else if (now >= view.busyUntil) {
-      if (u.state === 'moving') this.play(view, 'Running_A');
-      else if (u.state === 'attacking') this.play(view, READY_CLIP[u.role]!);
-      else this.play(view, 'Idle');
+      if (u.state === 'moving') this.play(view, view.catapult ? 'Walking_A' : view.monster ? 'Running_C' : 'Running_A');
+      else if (u.state === 'attacking') this.play(view, READY_CLIP[u.role] ?? (view.monster ? 'Idle_Combat' : 'Idle'));
+      else if (view.monster) {
+        // De guardia: posturas amenazantes de vez en cuando.
+        if (view.current !== 'Taunt' && Math.random() < dt * 0.08) {
+          this.play(view, 'Taunt', true);
+          view.busyUntil = now + this.ctx.assets.clip('Taunt').duration;
+        } else if (view.current === 'Taunt' || view.current === '' || view.current === 'Running_C') this.play(view, 'Idle_Combat');
+      } else this.play(view, 'Idle');
     }
     view.mixer.update(dt);
   }
@@ -433,9 +507,19 @@ export class BattleView {
       }
       case 'death': {
         const p = this.posOf(e.unitId, 0.2);
-        if (p) fx.dust(p, 0.3, 12);
+        if (p) {
+          fx.dust(p, 0.3, 12);
+          this.showLoot(p.clone().setY(1.2), e.loot);
+        }
         this.selected.delete(e.unitId);
         this.ctx.ui.notify();
+        break;
+      }
+      case 'impact': {
+        const p = toWorld(e.x, e.y, 0.2);
+        fx.explosion(p, 0.35 + e.radius * 0.25);
+        fx.dust(p.clone().setY(0.05), e.radius, 18);
+        this.ctx.shake(0.12);
         break;
       }
       case 'destroyed': {
@@ -444,12 +528,7 @@ export class BattleView {
         const p = toWorld(b.x + b.size / 2, b.y + b.size / 2, 0.8);
         fx.explosion(p, 0.5 + b.size * 0.25);
         if (b.type !== 'wall') this.ctx.shake(0.25 + b.size * 0.05);
-        const parts = RESOURCES.filter((r) => (e.loot[r] ?? 0) > 0);
-        for (const r of parts) {
-          const amount = e.loot[r]!;
-          this.ctx.overlays.floatText(p.clone().setY(1.8), `+${fmtNum(amount)} ${RESOURCE_ICONS[r]}`, r);
-          this.ctx.overlays.flyToHud(p.clone().setY(1.5), RESOURCE_ICONS[r], document.querySelector(`[data-loot="${r}"] .res-icon`), Math.min(8, 2 + Math.floor(Math.sqrt(amount) / 3)));
-        }
+        this.showLoot(p, e.loot);
         break;
       }
       case 'star':
@@ -457,6 +536,15 @@ export class BattleView {
         break;
       default:
         break;
+    }
+  }
+
+  /** Botín conseguido: texto flotante e iconos volando al marcador. */
+  private showLoot(p: THREE.Vector3, loot: Partial<Record<(typeof RESOURCES)[number], number>>): void {
+    for (const r of RESOURCES.filter((x) => (loot[x] ?? 0) > 0)) {
+      const amount = loot[r]!;
+      this.ctx.overlays.floatText(p.clone().setY(p.y + 1), `+${fmtNum(amount)} ${RESOURCE_ICONS[r]}`, r);
+      this.ctx.overlays.flyToHud(p.clone().setY(p.y + 0.7), RESOURCE_ICONS[r], document.querySelector(`[data-loot="${r}"] .res-icon`), Math.min(8, 2 + Math.floor(Math.sqrt(amount) / 3)));
     }
   }
 

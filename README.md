@@ -2,11 +2,11 @@
 
 Juego de estrategia en el navegador inspirado en Clash of Clans, con tres giros:
 
-1. **Aldeanos como unidad base**: se entrenan en edificios específicos para aprender un rol (guerrero, arquero, sanador) y subirlo de nivel.
+1. **Aldeanos como unidad base**: se entrenan en edificios específicos para aprender un rol (albañil, guerrero, arquero, sanador, catapulta) y subirlo de nivel.
 2. **Primera persona en batalla**: al atacar o defender puedes tomar el control de un soldado; si muere, pasas a otro al azar.
 3. **Vista táctica ↔ primera persona**: cambia en cualquier momento entre mandar al ejército desde arriba (RTS) y luchar en persona.
 
-Ahora mismo están implementadas la **fase 1: construcción de la aldea** (con arte 3D, animaciones, partículas y postprocesado) y la **fase 2: batallas RTS** contra aldeas generadas. Ver [docs/diseno.md](docs/diseno.md) para el diseño completo y la hoja de ruta.
+Ahora mismo están implementadas la **fase 1: construcción de la aldea** (con arte 3D, animaciones, partículas y postprocesado) y la **fase 2: batallas RTS** contra aldeas generadas y **campamentos de monstruos**, con catapultas, murallas y una enfermería donde curar (pagando) a los caídos. Ver [docs/diseno.md](docs/diseno.md) para el diseño completo y la hoja de ruta.
 
 ## Cómo ejecutarlo
 
@@ -50,6 +50,7 @@ Los `.glb` de `packages/client/public/assets/` ya están en el repo. Para regene
 ```bash
 git clone --depth 1 https://github.com/KayKit-Game-Assets/kaykit-medieval-hexagon-pack-1.0 ../kaykit/kaykit-medieval-hexagon-pack-1.0
 git clone --depth 1 https://github.com/KayKit-Game-Assets/kaykit-character-pack-adventures-1.0 ../kaykit/kaykit-character-pack-adventures-1.0
+git clone --depth 1 https://github.com/KayKit-Game-Assets/kaykit-character-pack-skeletons-1.0 ../kaykit/kaykit-character-pack-skeletons-1.0
 KAYKIT_DIR=../kaykit pnpm assets
 ```
 
@@ -63,7 +64,10 @@ KAYKIT_DIR=../kaykit pnpm assets
 | Rotar cámara | Arrastrar con clic derecho |
 | Zoom | Rueda |
 | Cancelar / deseleccionar | Esc · clic derecho |
-| Colocar en cadena | Mayús + clic (los muros lo hacen siempre) |
+| Colocar en cadena | Mayús + clic |
+| Trazar murallas | Arrastrar en línea recta con la muralla elegida |
+| Atacar un campamento de monstruos | Clic en su etiqueta 💀 (o en el campamento) |
+| Curar heridos | Panel de la enfermería → Sanar |
 
 ### En batalla
 
@@ -91,4 +95,4 @@ tools/      Pipeline de assets (gltf-transform) y prueba de humo con WebGPU.
 
 ## Créditos
 
-Modelos 3D y animaciones: **KayKit** Medieval Hexagon Pack y Character Pack Adventures, de [Kay Lousberg](https://www.kaylousberg.com) (licencia CC0).
+Modelos 3D y animaciones: **KayKit** Medieval Hexagon Pack, Character Pack Adventures y Character Pack Skeletons, de [Kay Lousberg](https://www.kaylousberg.com) (licencia CC0).

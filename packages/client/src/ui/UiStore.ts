@@ -51,6 +51,8 @@ export class UiStore {
   /** Lo implementa el mundo: empezar/terminar batallas y selección. */
   startBattle: () => void = () => {};
   nextOpponent: () => void = () => {};
+  /** Atacar un campamento de monstruos. */
+  attackCamp: (campId: number) => void = () => {};
   leaveBattle: () => void = () => {};
   selectAllUnits: () => void = () => {};
   selectedUnits: () => number[] = () => [];

@@ -41,6 +41,12 @@ export function structureSize(type: StructureType): number {
 export function baseLoot(base: DefenderBase): Record<ResourceId, number> {
   const total: Record<ResourceId, number> = { gold: 0, wood: 0, food: 0 };
   for (const b of base.buildings) for (const r of RESOURCES) total[r] += b.loot[r] ?? 0;
+  // Los monstruos también llevan botín encima.
+  for (const d of base.defenders) {
+    if (!(d.role in MONSTER_DEFS)) continue;
+    const loot = MONSTER_DEFS[d.role as MonsterId].loot;
+    for (const r of RESOURCES) total[r] += Math.round((loot[r] ?? 0) * levelScale(d.level));
+  }
   return total;
 }
 

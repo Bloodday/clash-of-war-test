@@ -22,6 +22,15 @@ export interface Bubble {
   onHover: () => void;
 }
 
+/** Etiqueta clicable (p. ej. campamentos de monstruos). */
+export interface Marker {
+  key: string;
+  pos: THREE.Vector3;
+  title: string;
+  sub: string;
+  onClick: () => void;
+}
+
 interface Flyer {
   el: HTMLDivElement;
   from: { x: number; y: number };
@@ -50,6 +59,7 @@ export class Overlays {
   private floaters: Floater[] = [];
   private bubbles = new Map<string, { el: HTMLDivElement; bubble: Bubble }>();
   private flyers: Flyer[] = [];
+  private markers = new Map<string, { el: HTMLButtonElement; marker: Marker }>();
   private v = new THREE.Vector3();
 
   constructor(
@@ -127,6 +137,37 @@ export class Overlays {
         e.el.classList.add('pop');
         setTimeout(() => e.el.remove(), 250);
         this.bubbles.delete(key);
+      }
+    }
+  }
+
+  setMarkers(list: Marker[]): void {
+    const seen = new Set<string>();
+    for (const m of list) {
+      seen.add(m.key);
+      let entry = this.markers.get(m.key);
+      if (!entry) {
+        const el = document.createElement('button');
+        el.className = 'marker';
+        el.innerHTML = '<b></b><small></small><span class="marker-cta">⚔️ Atacar</span>';
+        el.addEventListener('pointerdown', (e) => e.stopPropagation());
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          entry?.marker.onClick();
+        });
+        this.root.appendChild(el);
+        entry = { el, marker: m };
+        this.markers.set(m.key, entry);
+      }
+      entry.marker = m;
+      entry.el.querySelector('b')!.textContent = m.title;
+      entry.el.querySelector('small')!.textContent = m.sub;
+      this.place(entry.el, m.pos, 0);
+    }
+    for (const [key, e] of this.markers) {
+      if (!seen.has(key)) {
+        e.el.remove();
+        this.markers.delete(key);
       }
     }
   }

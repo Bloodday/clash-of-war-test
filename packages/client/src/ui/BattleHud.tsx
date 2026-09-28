@@ -4,7 +4,7 @@ import type { UiStore } from './UiStore';
 import { useSubscription } from './hooks';
 import { RESOURCE_ICONS, fmtNum } from './format';
 
-const ROLE_ICON: Record<MilitaryRole, string> = { warrior: '🗡️', archer: '🏹', healer: '✨' };
+const ROLE_ICON: Record<MilitaryRole, string> = { warrior: '🗡️', archer: '🏹', healer: '✨', catapult: '🪨' };
 
 function mmss(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds));
@@ -48,7 +48,7 @@ export function BattleHud({ battle, ui }: { battle: BattleController; ui: UiStor
       <div class="battle-top panel">
         <div class="enemy">
           <b>{s.enemyName}</b>
-          <small>Ayuntamiento {s.enemyTownHall}</small>
+          <small>{s.kind === 'camp' ? `💀 Campamento de monstruos · nivel ${s.enemyTownHall}` : `Ayuntamiento ${s.enemyTownHall}`}</small>
         </div>
         <div class="battle-center">
           {s.phase === 'scouting' ? <div class="timer scouting">Reconocimiento</div> : <div class={remaining < 30 ? 'timer low' : 'timer'}>{mmss(remaining)}</div>}
@@ -68,9 +68,11 @@ export function BattleHud({ battle, ui }: { battle: BattleController; ui: UiStor
 
       {s.phase === 'scouting' && (
         <div class="battle-actions panel">
-          <button class="small" onClick={() => ui.nextOpponent()}>
-            Siguiente aldea ⟳
-          </button>
+          {s.kind === 'village' && (
+            <button class="small" onClick={() => ui.nextOpponent()}>
+              Siguiente aldea ⟳
+            </button>
+          )}
           <button class="small" onClick={() => ui.leaveBattle()}>
             Volver a la aldea
           </button>
@@ -149,13 +151,18 @@ export function BattleHud({ battle, ui }: { battle: BattleController; ui: UiStor
             {RESOURCES.some((r) => (s.lootTaken[r] ?? 0) > battle.summary!.gained[r]) && (
               <small class="warn">Tus almacenes están llenos: parte del botín se perdió.</small>
             )}
-            {battle.summary.fallen.length > 0 ? (
+            {battle.summary.campCleared && <p class="good">💀 ¡Campamento arrasado! Los monstruos no volverán a este claro.</p>}
+            {battle.summary.wounded.length > 0 && (
               <p class="muted">
-                Heridos: {battle.summary.fallen.join(', ')}. Se recuperarán en la aldea antes de poder volver a luchar.
+                🩹 Heridos en la enfermería: {battle.summary.wounded.join(', ')}. Págales la cura en la enfermería para que vuelvan a luchar.
               </p>
-            ) : (
-              <p class="muted">¡Todos tus soldados vuelven sanos!</p>
             )}
+            {battle.summary.dead.length > 0 && (
+              <p class="warn">
+                ✝ Muertos (no había camas libres): {battle.summary.dead.join(', ')}. Construye o mejora enfermerías para salvar a más.
+              </p>
+            )}
+            {battle.summary.wounded.length + battle.summary.dead.length === 0 && <p class="muted">¡Todos tus soldados vuelven sanos!</p>}
             <button class="primary big" onClick={() => ui.leaveBattle()}>
               Volver a la aldea
             </button>

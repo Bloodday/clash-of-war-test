@@ -5,10 +5,14 @@
 //   public/assets/village.glb     edificios, decoración y props (1 textura compartida)
 //   public/assets/char_*.glb      personajes riggeados (sin animaciones)
 //   public/assets/animations.glb  clips seleccionados del rig compartido
+//   public/assets/char_Skeleton_*.glb  monstruos (pack Skeletons, mismo rig)
+//   public/assets/skeleton_gear.glb    armas y escudos de los esqueletos
+//   public/assets/anim_skeletons.glb   clips propios de los esqueletos
 //
 // Uso:
 //   git clone --depth 1 https://github.com/KayKit-Game-Assets/kaykit-medieval-hexagon-pack-1.0 <dir>/...
 //   git clone --depth 1 https://github.com/KayKit-Game-Assets/kaykit-character-pack-adventures-1.0 <dir>/...
+//   git clone --depth 1 https://github.com/KayKit-Game-Assets/kaykit-character-pack-skeletons-1.0 <dir>/...
 //   KAYKIT_DIR=<dir> pnpm assets
 
 import { NodeIO } from '@gltf-transform/core';
@@ -23,6 +27,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const KAYKIT = process.env.KAYKIT_DIR ?? '/home/user/kaykit-game-assets';
 const HEX = join(KAYKIT, 'kaykit-medieval-hexagon-pack-1.0/addons/kaykit_medieval_hexagon_pack/Assets/gltf');
 const CHARS = join(KAYKIT, 'kaykit-character-pack-adventures-1.0/addons/kaykit_character_pack_adventures/Characters/gltf');
+const SKEL = join(KAYKIT, 'kaykit-character-pack-skeletons-1.0/addons/kaykit_character_pack_skeletons');
 const OUT = join(ROOT, 'packages/client/public/assets');
 
 const BUILDINGS = [
@@ -55,6 +60,16 @@ const CLIPS = [
   '1H_Melee_Attack_Chop', '1H_Melee_Attack_Slice_Diagonal', '1H_Melee_Attack_Stab', '2H_Melee_Idle',
   '2H_Ranged_Aiming', '2H_Ranged_Shoot', '2H_Ranged_Reload', 'Spellcast_Shoot', 'Spellcasting', 'Spellcast_Long',
   'Block', 'Hit_A', 'Death_A', 'Death_A_Pose', 'Sit_Floor_Idle', 'Throw', 'Dodge_Forward',
+];
+
+const SKELETONS = ['Skeleton_Minion', 'Skeleton_Warrior', 'Skeleton_Rogue', 'Skeleton_Mage'];
+const SKELETON_GEAR = [
+  'Skeleton_Blade', 'Skeleton_Axe', 'Skeleton_Crossbow', 'Skeleton_Staff', 'Skeleton_Shield_Large_A',
+  'Skeleton_Shield_Small_A', 'Skeleton_Shield_Small_B', 'Skeleton_Quiver', 'Skeleton_Arrow',
+];
+const SKELETON_CLIPS = [
+  'Skeletons_Awaken_Floor', 'Skeletons_Inactive_Floor_Pose', 'Death_C_Skeletons', 'Death_C_Pose', 'Taunt',
+  'Idle_Combat', 'Walking_D_Skeletons', 'Running_C', 'Spellcast_Summon', '1H_Melee_Attack_Jump_Chop', 'Idle_B',
 ];
 
 await MeshoptEncoder.ready;
@@ -120,8 +135,8 @@ function nameRoots(doc, file) {
 }
 
 /** Un GLB por personaje: si se unieran, GLTFLoader renombraría los huesos repetidos (hips_1...). */
-async function buildCharacter(name) {
-  const doc = await io.read(join(CHARS, `${name}.glb`));
+async function buildCharacter(name, dir = CHARS) {
+  const doc = await io.read(join(dir, `${name}.glb`));
   for (const a of doc.getRoot().listAnimations()) disposeAnimation(a);
   const scene = doc.getRoot().listScenes()[0];
   const group = doc.createNode(name);
@@ -134,9 +149,9 @@ async function buildCharacter(name) {
   return doc;
 }
 
-async function buildAnimations() {
-  const doc = await io.read(join(CHARS, 'Knight.glb'));
-  const keep = new Set(CLIPS);
+async function buildAnimations(file = join(CHARS, 'Knight.glb'), clips = CLIPS) {
+  const doc = await io.read(file);
+  const keep = new Set(clips);
   for (const a of doc.getRoot().listAnimations()) if (!keep.has(a.getName())) disposeAnimation(a);
   // Solo se necesitan los huesos: fuera mallas y texturas.
   for (const n of doc.getRoot().listNodes()) {
@@ -144,8 +159,27 @@ async function buildAnimations() {
     n.setSkin(null);
   }
   await doc.transform(resample(), dropOrphanAccessors(), prune({ keepLeaves: true }), unpartition(), meshopt({ encoder: MeshoptEncoder, level: 'medium' }));
-  const missing = CLIPS.filter((c) => !doc.getRoot().listAnimations().some((a) => a.getName() === c));
+  const missing = clips.filter((c) => !doc.getRoot().listAnimations().some((a) => a.getName() === c));
   if (missing.length) throw new Error(`Faltan animaciones: ${missing.join(', ')}`);
+  return doc;
+}
+
+/** Armas sueltas de los esqueletos, cada una como raíz con el nombre del archivo. */
+async function buildGear() {
+  const files = SKELETON_GEAR.map((g) => join(SKEL, 'Assets/gltf', `${g}.gltf`));
+  const doc = await io.read(files[0]);
+  nameRoots(doc, files[0]);
+  for (const f of files.slice(1)) {
+    const other = await io.read(f);
+    nameRoots(other, f);
+    mergeDocuments(doc, other);
+  }
+  const [main, ...rest] = doc.getRoot().listScenes();
+  for (const s of rest) {
+    for (const n of s.listChildren()) main.addChild(n);
+    s.dispose();
+  }
+  await doc.transform(dedup(), prune(), weld(), unpartition(), meshopt({ encoder: MeshoptEncoder, level: 'medium' }));
   return doc;
 }
 
@@ -153,7 +187,10 @@ mkdirSync(OUT, { recursive: true });
 for (const [name, build] of [
   ['village.glb', buildVillage],
   ...CHARACTERS.map((c) => [`char_${c}.glb`, () => buildCharacter(c)]),
-  ['animations.glb', buildAnimations],
+  ['animations.glb', () => buildAnimations()],
+  ...SKELETONS.map((c) => [`char_${c}.glb`, () => buildCharacter(c, join(SKEL, 'Characters/gltf'))]),
+  ['skeleton_gear.glb', buildGear],
+  ['anim_skeletons.glb', () => buildAnimations(join(SKEL, 'Characters/gltf/Skeleton_Minion.glb'), SKELETON_CLIPS)],
 ]) {
   const doc = await build();
   const path = join(OUT, name);

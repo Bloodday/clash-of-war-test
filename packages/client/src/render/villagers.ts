@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { BUILDING_DEFS, ROLE_DEFS, TICK_RATE, type Building, type GameState, type RoleId, type Villager } from '@cow/shared';
+import { BUILDING_DEFS, ROLE_DEFS, TICK_RATE, type Building, type GameState, type RoleId, type UnitKind, type Villager } from '@cow/shared';
 import type { Assets, CharacterName } from './assets';
 import { cellToWorld } from './coords';
 import type { Particles } from './particles';
@@ -14,12 +14,29 @@ const FADE = 0.25;
 
 export interface Look {
   character: CharacterName;
-  show: string[];
+  /** Piezas visibles además del cuerpo; 'all' muestra todas (esqueletos). */
+  show: string[] | 'all';
+  /** Armas de los esqueletos, colgadas de los huesos de las manos. */
+  gear?: [slot: 'handslot.r' | 'handslot.l', name: string][];
+  scale?: number;
 }
 
-export function lookFor(v: Pick<Villager, "role" | "roleLevel">): Look {
+export function lookFor(v: { role: RoleId | UnitKind | null; roleLevel: number }): Look {
   const l = v.roleLevel;
   switch (v.role) {
+    case 'catapult':
+      // Servidores de la catapulta: ropa de faena, bomba al cinto.
+      return { character: 'Rogue', show: ['Throwable', ...(l >= 2 ? ['Rogue_Cape'] : []), ...(l >= 3 ? ['Knife'] : [])] };
+    case 'minion':
+      return { character: 'Skeleton_Minion', show: 'all', gear: [['handslot.r', 'Skeleton_Blade'], ['handslot.l', 'Skeleton_Shield_Small_A']], scale: 0.9 };
+    case 'skeletonWarrior':
+      return { character: 'Skeleton_Warrior', show: 'all', gear: [['handslot.r', 'Skeleton_Axe'], ['handslot.l', 'Skeleton_Shield_Small_B']] };
+    case 'skeletonRogue':
+      return { character: 'Skeleton_Rogue', show: 'all', gear: [['handslot.r', 'Skeleton_Crossbow']] };
+    case 'skeletonMage':
+      return { character: 'Skeleton_Mage', show: 'all', gear: [['handslot.r', 'Skeleton_Staff']] };
+    case 'boneLord':
+      return { character: 'Skeleton_Warrior', show: 'all', gear: [['handslot.r', 'Skeleton_Axe'], ['handslot.l', 'Skeleton_Shield_Large_A']], scale: 1.55 };
     case 'warrior':
       return {
         character: 'Knight',
@@ -38,6 +55,25 @@ export function lookFor(v: Pick<Villager, "role" | "roleLevel">): Look {
 }
 
 export const BODY_PART = /_(ArmLeft|ArmRight|Body|Head|Head_Hooded|LegLeft|LegRight)$/;
+
+/** Personaje listo para animar con las piezas y armas de su aspecto. */
+export function dressCharacter(assets: Assets, look: Look, scale: number): THREE.Object3D {
+  const model = assets.character(look.character);
+  model.scale.setScalar(scale * (look.scale ?? 1));
+  model.traverse((o) => {
+    if (o instanceof THREE.Mesh || o instanceof THREE.SkinnedMesh) {
+      o.visible = look.show === 'all' || BODY_PART.test(o.name) || look.show.includes(o.name);
+      o.castShadow = true;
+      o.frustumCulled = false;
+    }
+  });
+  for (const [slot, name] of look.gear ?? []) {
+    // GLTFLoader quita los puntos de los nombres de nodo: "handslot.r" → "handslotr".
+    const bone = model.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(slot)) ?? model.getObjectByName(slot);
+    if (bone) bone.add(assets.gear(name));
+  }
+  return model;
+}
 
 type Activity = 'idle' | 'build' | 'repair' | 'train' | 'rest';
 
@@ -131,7 +167,7 @@ export class VillagerAgents {
   /** Cambia de personaje o de equipo cuando el rol o su nivel cambian. */
   private updateLook(agent: Agent, v: Villager): void {
     const look = lookFor(v);
-    const key = `${look.character}:${look.show.join(',')}`;
+    const key = `${look.character}:${Array.isArray(look.show) ? look.show.join(',') : look.show}`;
     if (agent.lookKey === key) return;
     const promoted = agent.lookKey !== '';
     agent.lookKey = key;
@@ -148,7 +184,7 @@ export class VillagerAgents {
       }
     });
     for (const [name, o] of agent.parts) {
-      if (o instanceof THREE.Mesh || o instanceof THREE.SkinnedMesh) o.visible = BODY_PART.test(name) || look.show.includes(name);
+      if (o instanceof THREE.Mesh || o instanceof THREE.SkinnedMesh) o.visible = look.show === 'all' || BODY_PART.test(name) || look.show.includes(name);
     }
     agent.root.add(model);
     agent.model = model;
@@ -194,8 +230,8 @@ export class VillagerAgents {
     if (t.kind === 'build') return { key: `b${t.buildingId}`, building: byId(t.buildingId), activity: 'build' };
     if (t.kind === 'train') return { key: `t${t.buildingId}`, building: byId(t.buildingId), activity: 'train' };
     if (t.kind === 'wounded') {
-      // Los heridos descansan junto al templo (o el ayuntamiento) hasta recuperarse.
-      const rest = state.buildings.find((b) => b.type === 'temple') ?? state.buildings.find((b) => b.type === 'townHall');
+      // Los heridos guardan cama en su enfermería hasta que alguien pague su cura.
+      const rest = byId(t.infirmaryId) ?? state.buildings.find((b) => b.type === 'townHall');
       return { key: `w${rest?.id}`, building: rest, activity: 'rest' };
     }
     // Soldados: de guardia junto a su edificio. Sin formar: esperan en la posada.
@@ -288,7 +324,9 @@ export class VillagerAgents {
     show('Mug', false);
     if (activity === 'rest') {
       this.play(agent, 'Sit_Floor_Idle');
-      if (agent.fxClock > 2.5) {
+      // Destellos verdes solo mientras se les está curando.
+      const healing = b?.healing?.patientIds.includes(v.id);
+      if (healing && agent.fxClock > 1.2) {
         agent.fxClock = 0;
         this.particles.magic(agent.root.position.clone().setY(0.7), '#9dffa0');
       }
@@ -319,6 +357,7 @@ export class VillagerAgents {
       warrior: ['1H_Melee_Attack_Slice_Diagonal', '1H_Melee_Attack_Chop', 'Block', '1H_Melee_Attack_Stab'],
       archer: ['2H_Ranged_Aiming', '2H_Ranged_Shoot', '2H_Ranged_Reload'],
       healer: ['Spellcasting', 'Spellcast_Shoot', 'Spellcast_Long'],
+      catapult: ['Throw', 'Interact', 'PickUp', 'Use_Item'],
     };
     const list = role ? drills[role] : ['Interact'];
     this.play(agent, list[agent.loopIndex % list.length]!);

@@ -18,6 +18,7 @@ export function TopBar({ state }: { state: GameState }) {
   const idleBuilders = getIdleBuilders(state).length;
   const unformed = state.villagers.filter((v) => v.role === null).length;
   const soldiersOnly = state.villagers.filter((v) => v.role !== null && v.role !== 'builder').length;
+  const wounded = state.villagers.filter((v) => v.task.kind === 'wounded').length;
   return (
     <div class="topbar panel">
       <div class="stat" title="Nivel del ayuntamiento">
@@ -54,6 +55,11 @@ export function TopBar({ state }: { state: GameState }) {
       <div class="stat" title="Soldados entrenados">
         ⚔️ <b>{soldiersOnly}</b>
       </div>
+      {wounded > 0 && (
+        <div class="stat waiting" title="Heridos en la enfermería: págales la cura para que vuelvan a luchar">
+          🩹 <b>{wounded}</b>
+        </div>
+      )}
     </div>
   );
 }

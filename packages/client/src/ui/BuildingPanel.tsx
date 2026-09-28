@@ -10,15 +10,19 @@ import {
   getBuildingProduction,
   getHousing,
   getIncomingRecruits,
+  getPatients,
   getRepairers,
   getTownHallLevel,
   getTrainees,
+  healCost,
+  healTicks,
   isDamaged,
   maxHp,
   nextRoleLevel,
   producedResource,
   producerCapacity,
   roleMaxLevel,
+  waitingPatients,
   type Building,
   type Command,
   type GameState,
@@ -85,6 +89,8 @@ export function BuildingPanel({ game, ui, building: b }: Props) {
 
       {b.type === 'townHall' && <Population state={state} />}
 
+      {b.type === 'infirmary' && b.level > 0 && <Infirmary state={state} building={b} run={run} />}
+
       {cur?.recruitSlots && <Recruiting state={state} building={b} run={run} />}
 
       <section class="actions">
@@ -116,6 +122,7 @@ function Stats({ building: b }: { building: Building }) {
   if (cur.housing) rows.push(['Alojamiento', `${cur.housing} aldeanos`]);
   if (cur.storage) rows.push(['Almacena', RESOURCES.map((r) => `${RESOURCE_ICONS[r]} ${fmtNum(cur.storage![r] ?? 0)}`).join('  ')]);
   if (cur.trainingSlots) rows.push(['Plazas de entrenamiento', String(cur.trainingSlots)]);
+  if (cur.beds) rows.push(['Camas / velocidad de cura', `${cur.beds} / ×${cur.healSpeed ?? 1}`]);
   if (cur.damage) rows.push(['Daño / alcance', `${cur.damage} / ${cur.range}`]);
   return (
     <section>
@@ -186,7 +193,8 @@ function Population({ state }: { state: GameState }) {
   const rows: [string, number][] = [
     ['🧑 Sin formar', count((v) => v.role === null)],
     ['🔨 Albañiles', count((v) => v.role === 'builder')],
-    ...(['warrior', 'archer', 'healer'] as const).map((r): [string, number] => [`⚔️ ${ROLE_DEFS[r].name}s`, count((v) => v.role === r)]),
+    ...(['warrior', 'archer', 'healer', 'catapult'] as const).map((r): [string, number] => [`⚔️ ${ROLE_DEFS[r].name}s`, count((v) => v.role === r)]),
+    ['🩹 Heridos', count((v) => v.task.kind === 'wounded')],
   ];
   return (
     <section>
@@ -201,8 +209,69 @@ function Population({ state }: { state: GameState }) {
       </dl>
       <small class="muted">
         {state.villagers.length} / {getHousing(state)} alojados. Recluta en la posada y forma a los aldeanos en el taller, el cuartel, el
-        campo de tiro o el templo.
+        campo de tiro, el templo o el taller de asedio.
       </small>
+    </section>
+  );
+}
+
+function Infirmary({ state, building: b, run }: { state: GameState; building: Building; run: Run }) {
+  const beds = currentLevelDef(b)?.beds ?? 0;
+  const patients = getPatients(state, b.id);
+  const waiting = waitingPatients(state, b);
+  const job = b.healing;
+  const healing = new Set(job?.patientIds ?? []);
+  return (
+    <section>
+      <h3>
+        Camas {patients.length}/{beds}
+      </h3>
+      <div class="beds">
+        {Array.from({ length: beds }, (_, i) => {
+          const v = patients[i];
+          return (
+            <span key={i} class={!v ? 'bed' : healing.has(v.id) ? 'bed healing' : 'bed taken'} title={v ? `${v.name} · ${roleLabel(v)}` : 'Cama libre'}>
+              {!v ? '🛏️' : healing.has(v.id) ? '💚' : '🤕'}
+            </span>
+          );
+        })}
+      </div>
+      {job && (
+        <div class="col">
+          <span>
+            💚 Curando a {job.patientIds.length} · quedan {fmtTime(job.remainingTicks / TICK_RATE)}
+          </span>
+          <Progress value={1 - job.remainingTicks / job.totalTicks} />
+        </div>
+      )}
+      {patients.length > 0 ? (
+        <ul class="list">
+          {patients.map((v) => (
+            <li key={v.id}>
+              <span>
+                {healing.has(v.id) ? '💚' : '🤕'} {v.name}
+              </span>
+              <small class="muted">{roleLabel(v)}</small>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p class="muted">No hay heridos. Los soldados que caigan en batalla ocuparán estas camas; si no queda ninguna libre, morirán.</p>
+      )}
+      {waiting.length > 0 && (
+        <button
+          class="primary"
+          disabled={job !== null || b.construction !== null || b.hp <= 0}
+          onClick={() => run({ type: 'healWounded', buildingId: b.id }, `Curando a ${waiting.length} herido${waiting.length > 1 ? 's' : ''}`)}
+        >
+          <span>
+            Sanar {waiting.length} herido{waiting.length > 1 ? 's' : ''} · {fmtTime(healTicks(waiting, b) / TICK_RATE)}
+          </span>
+          <CostView cost={healCost(waiting)} state={state} />
+        </button>
+      )}
+      {job && waiting.length > 0 && <small class="muted">Los demás esperan a que termine la cura en curso.</small>}
+      <small class="muted">No se curan solos: cuantos más heridos y de más nivel, más cuesta y más tarda.</small>
     </section>
   );
 }

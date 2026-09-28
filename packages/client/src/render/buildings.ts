@@ -3,6 +3,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { hash, instanceIndex, positionLocal, sin, time, vec3, vertexColor } from 'three/tsl';
 import { BUILDING_DEFS, type Building, type BuildingType } from '@cow/shared';
 import { localBounds } from './assets';
+import { createBanner, createBones, createCampfire, createCatapult, createChest, createCot, createTotem } from './props';
 
 /** Fuente de modelos (Assets o una versión con el color de otro equipo). */
 export interface ModelSource {
@@ -38,9 +39,12 @@ export interface BuildingVisual {
 }
 
 interface Spec {
-  models: string[]; // uno por nivel (se repite el último)
+  models: string[]; // uno por nivel (se repite el último); vacío si todo lo pone `extra`
   fill: number; // fracción de la huella que ocupa el modelo
   pad: string;
+  offset?: [number, number]; // desplazamiento del modelo principal (−0.5..0.5)
+  /** Piezas procedurales; devuelve su altura. */
+  extra?: (assets: ModelSource, body: THREE.Group, size: number, level: number) => number;
   props?: (level: number) => [string, number, number, number, number?][]; // modelo, x, z (−0.5..0.5), escala relativa, rotación
   chimney?: [number, number, number]; // posición relativa al tamaño del modelo
 }
@@ -162,7 +166,118 @@ const SPECS: Record<Exclude<BuildingType, 'wall' | 'farm'>, Spec> = {
     fill: 0.92,
     pad: PAD_STONE,
   },
+  siegeWorkshop: {
+    // Un taller al fondo y una catapulta en el patio, que dispara al entrenar.
+    models: ['building_blacksmith_blue'],
+    fill: 0.46,
+    offset: [-0.24, -0.24],
+    pad: PAD_DIRT,
+    props: (l) => [
+      ['resource_lumber', 0.36, -0.36, 0.28, 1.2],
+      ['crate_A_big', -0.4, 0.38, 0.16],
+      ...(l >= 2 ? ([['weaponrack', 0.42, 0.12, 0.2, -1.57], ['flag_blue', -0.45, 0.1, 0.05]] as const) : []),
+      ...(l >= 3 ? ([['resource_stone', -0.08, -0.42, 0.18], ['ladder', 0.44, 0.44, 0.08]] as const) : []),
+    ] as [string, number, number, number, number?][],
+    extra: (_assets, body, size) => {
+      const cat = createCatapult();
+      cat.root.scale.setScalar(size * 0.36);
+      cat.root.position.set(size * 0.12, 0.08, size * 0.12);
+      cat.root.rotation.y = -0.5;
+      body.add(cat.root);
+      let clock = 1 + Math.random() * 2;
+      cat.root.userData.tick = (dt: number, active: boolean) => {
+        cat.update(dt);
+        clock -= dt;
+        if (clock <= 0 && active) {
+          cat.fire();
+          clock = 3.5;
+        }
+      };
+      return size * 0.3;
+    },
+  },
+  infirmary: {
+    // Tiendas de campaña, catres (uno por cama) y el estandarte de la cruz.
+    models: ['tent'],
+    fill: 0.5,
+    offset: [-0.22, -0.22],
+    pad: PAD_GRASS,
+    props: (l) => [
+      ['tent', 0.26, -0.3, 0.3, -0.4],
+      ['bucket_water', -0.42, 0.1, 0.08],
+      ...(l >= 2 ? ([['building_well_blue', 0.36, 0.08, 0.18]] as const) : []),
+      ...(l >= 3 ? ([['crate_A_small', -0.44, -0.05, 0.08], ['sack', -0.44, -0.16, 0.08]] as const) : []),
+    ] as [string, number, number, number, number?][],
+    extra: (_assets, body, size, level) => {
+      const beds = BUILDING_DEFS.infirmary.levels[level - 1]?.beds ?? 3;
+      const shown = Math.min(beds, 8);
+      for (let i = 0; i < shown; i++) {
+        const cot = createCot(false);
+        const row = Math.floor(i / 4);
+        cot.scale.setScalar(size * 0.26);
+        cot.position.set(size * (-0.32 + (i % 4) * 0.16), 0.08, size * (0.18 + row * 0.24));
+        cot.name = `cot:${i}`;
+        body.add(cot);
+      }
+      const banner = createBanner();
+      banner.scale.setScalar(size * 0.36);
+      banner.position.set(size * 0.44, 0.08, size * 0.44);
+      body.add(banner);
+      return size * 0.3;
+    },
+  },
 };
+
+/** Estructuras de los campamentos de monstruos (solo en batalla). */
+export function createCampVisual(assets: ModelSource, type: string, size: number, destroyed: boolean, id: number): BuildingVisual {
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  root.add(body);
+  root.userData.buildingId = id;
+  body.add(pad(size, '#7c6247'));
+  let height = 0.8;
+  if (destroyed) {
+    const rubble = assets.model('building_destroyed');
+    height = fit(rubble, size * 0.75);
+    rubble.position.y += 0.08;
+    body.add(rubble);
+    const bones = createBones(id);
+    bones.scale.setScalar(size * 0.9);
+    bones.position.y = 0.08;
+    body.add(bones);
+    return makeVisual(root, body, Math.max(height, 0.6), []);
+  }
+  if (type === 'campTent') {
+    const tent = assets.model('tent');
+    height = fit(tent, size * 0.85);
+    tent.position.y += 0.08;
+    body.add(tent);
+    const bones = createBones(id);
+    bones.position.set(size * 0.32, 0.08, size * 0.34);
+    bones.scale.setScalar(size * 0.5);
+    body.add(bones);
+  } else if (type === 'campChest') {
+    const chest = createChest();
+    chest.scale.setScalar(size * 1.05);
+    chest.position.y = 0.08;
+    chest.rotation.y = (id % 4) * 0.4 - 0.6;
+    body.add(chest);
+    height = 0.55;
+  } else {
+    const { root: totem, orb } = createTotem();
+    totem.scale.setScalar(size * 1.05);
+    totem.position.y = 0.08;
+    body.add(totem);
+    height = 1.55 * size;
+    let t = Math.random() * 6;
+    orb.userData.tick = (dt: number) => {
+      t += dt;
+      orb.position.y = 1.36 + Math.sin(t * 2.2) * 0.05;
+      orb.scale.setScalar(1 + Math.sin(t * 5) * 0.08);
+    };
+  }
+  return makeVisual(root, body, height, []);
+}
 
 /** Escala uniforme para que el modelo ocupe `width` en planta, centrado y apoyado en el suelo. */
 function fit(obj: THREE.Object3D, width: number): number {
@@ -238,6 +353,10 @@ function makeVisual(root: THREE.Group, body: THREE.Group, height: number, smoke:
     const f = o.userData.fill as { min: number; uniform: boolean } | undefined;
     if (f) fillers.push({ obj: o, ...f, base: o.scale.clone() });
   });
+  const ticks: ((dt: number, active: boolean) => void)[] = [];
+  body.traverse((o) => {
+    if (typeof o.userData.tick === 'function') ticks.push(o.userData.tick);
+  });
   let fill = -1;
   const phase = Math.random() * 10;
   let t = 0;
@@ -256,6 +375,7 @@ function makeVisual(root: THREE.Group, body: THREE.Group, height: number, smoke:
       flags.forEach((f, i) => {
         f.rotation.y = Math.sin(t * 2.6 + phase + i) * 0.25;
       });
+      for (const tick of ticks) tick(dt, active);
     },
     setFill(fraction) {
       const f = Math.round(Math.min(1, Math.max(0, fraction)) * 50) / 50;
@@ -308,6 +428,10 @@ export function createBuildingVisual(assets: ModelSource, b: Building, wallMask 
     const name = spec.models[Math.min(b.level, spec.models.length) - 1]!;
     const model = assets.model(name);
     height = fit(model, size * spec.fill);
+    if (spec.offset) {
+      model.position.x += spec.offset[0] * size;
+      model.position.z += spec.offset[1] * size;
+    }
     // El ayuntamiento crece un poco con cada nivel.
     if (b.type === 'townHall') {
       const k = 1 + (b.level - 1) * 0.06;
@@ -318,6 +442,7 @@ export function createBuildingVisual(assets: ModelSource, b: Building, wallMask 
     model.position.y += 0.08;
     body.add(model);
     for (const [prop, x, z, s, rot] of spec.props?.(b.level) ?? []) addProp(assets, body, prop, x * size, z * size, s * size, rot);
+    if (spec.extra) height = Math.max(height, spec.extra(assets, body, size, b.level));
     if (spec.chimney) {
       const w = size * spec.fill;
       smoke.push(new THREE.Vector3(spec.chimney[0] * w, spec.chimney[1] * height, spec.chimney[2] * w));
@@ -509,7 +634,7 @@ const ghostOk = new THREE.MeshStandardMaterial({ color: '#5fe07a', transparent: 
 const ghostBad = new THREE.MeshStandardMaterial({ color: '#ff4a3d', transparent: true, opacity: 0.5, depthWrite: false, emissive: new THREE.Color('#7a1f1a') });
 
 export function createGhost(assets: ModelSource, type: BuildingType): THREE.Group {
-  const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null, hp: 1, stored: 0, recruits: [] };
+  const fake: Building = { id: -1, type, x: 0, y: 0, level: 1, construction: null, hp: 1, stored: 0, recruits: [], healing: null };
   const g = createBuildingVisual(assets, fake).root;
   const size = BUILDING_DEFS[type].size;
   const base = new THREE.Mesh(cached(`ghost:${size}`, () => new THREE.BoxGeometry(size, 0.04, size)), ghostOk);

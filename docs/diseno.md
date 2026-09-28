@@ -18,10 +18,11 @@ Constructor de aldeas asíncrono (estilo Clash of Clans) cuyo ejército está fo
   | Cuartel | Guerrero | Cuerpo a cuerpo. |
   | Campo de tiro | Arquero | A distancia. |
   | Templo | Sanador | Cura a los aliados. |
+  | Taller de asedio (ayto. 2) | Catapulta | Lanza rocas con daño en área por encima de las murallas; solo ataca edificios. Lenta y frágil. |
 
-- La decisión estratégica: cuántos aldeanos formas como albañiles (economía) y cuántos como soldados (ejército). Reentrenar a alguien en otro rol lo reinicia a nivel 1.
+- La decisión estratégica: cuántos aldeanos formas como albañiles (economía) y cuántos como soldados (ejército). **El oficio es para siempre**: un aldeano formado solo puede subir de nivel en su rol, nunca cambiarlo.
 - Cada obra ocupa a un albañil (se elige al de más nivel). Los albañiles libres reparan solos los edificios dañados. En la barra superior: 🔨 albañiles libres / total y 🧑 aldeanos sin formar.
-- Aspecto: sin formar = pícaro sencillo; albañil = bárbaro con hacha (gorro y capa con el nivel); guerrero = caballero; arquero = pícaro encapuchado; sanador = mago.
+- Aspecto: sin formar = pícaro sencillo; albañil = bárbaro con hacha (gorro y capa con el nivel); guerrero = caballero; arquero = pícaro encapuchado; sanador = mago; catapulta = pícaro con bomba que empuja su máquina.
 
 ### 2. Economía (como en Clash of Clans)
 
@@ -48,8 +49,17 @@ Constructor de aldeas asíncrono (estilo Clash of Clans) cuyo ejército está fo
 - **Control RTS**: arrastrar con el botón izquierdo para seleccionar, clic derecho sobre el suelo para mover (en formación) o sobre un enemigo/edificio para atacarlo; «Ataque libre» los devuelve a su IA. Botón central/WASD para desplazar, derecho + arrastrar para rotar.
 - **IA**: sin órdenes, los guerreros y arqueros atacan al enemigo cercano o al edificio más próximo; los sanadores curan al aliado más herido y siguen al grupo; los defensores salen a por quien se acerque a su puesto y vuelven; las torres disparan al atacante más cercano.
 - **Caminos**: A* sobre la cuadrícula; los muros cuestan mucho pero se pueden atravesar rompiéndolos, así que las unidades rodean si hay hueco y abren brecha si no.
+- **Catapultas**: buscan el edificio más cercano que no sea muralla (alcance 9–11) y disparan por encima de todo; la roca hace daño en área (la mitad alrededor del impacto).
+- **Murallas**: se construyen como un edificio más (antes se llamaban «Muro»). En modo colocación, **arrastrar** traza una línea recta horizontal o vertical: se previsualiza en verde/rojo según hueco, límite del ayuntamiento y recursos, y al soltar se encarga un tramo por celda (las ocupadas se saltan).
 - **Resultado**: 1★ por 50 % de destrucción, 1★ por el ayuntamiento, 1★ por el 100 %. El botín de cada edificio se consigue al destruirlo y se suma a tus almacenes (lo que no quepa se pierde).
-- **Heridos**: los soldados que caen no mueren: vuelven heridos y se recuperan en la aldea (45 s por nivel) antes de poder luchar de nuevo.
+- **Heridos y enfermería**: los soldados que caen vuelven **heridos** si queda cama libre en alguna **enfermería** (3 / 5 / 8 camas por nivel; se reparten primero a los de más nivel). **Si no hay camas, mueren** y desaparecen de la aldea. Los heridos **no se curan solos**: en el panel de la enfermería se paga la cura de todos los que esperan (40 🌾 + 25 🪙 por nivel de cada soldado) y tarda 30 s por nivel sumado, más rápido en enfermerías mejores (×1 / ×1,3 / ×1,7). Mientras, no pueden combatir.
+
+**Campamentos de monstruos**
+
+- En los claros del bosque que rodea la aldea aparecen **campamentos de esqueletos** (uno al empezar y otro cada 8 min, hasta 3). Su nivel ronda el de tu ayuntamiento (±1).
+- Se atacan desde su etiqueta (o haciendo clic en ellos): tiendas y cofres con botín, tótems que lanzan magia y una guardia de esbirros, guerreros, ballesteros, nigromantes y, desde nivel 3, un **Señor de los huesos**.
+- Cada monstruo suelta botín al morir; cofres y tiendas, al destruirlos. 2.ª estrella = todos los monstruos muertos. **Arrasar** el campamento lo hace desaparecer del mapa.
+- Las reglas de heridos y enfermería son las mismas que en cualquier batalla.
 - La simulación (`packages/shared/src/battle`) es determinista a 20 ticks/s y solo cambia con comandos (`deploy`, `order`, `surrender`): está lista para ejecutarse en el servidor.
 
 **Fase 3 (pendiente)**: primera persona, poseyendo a una de tus unidades; al morir, el control pasa a otra al azar.
@@ -84,6 +94,8 @@ Implicaciones técnicas:
 
 Estética *low-poly* colorida y cálida, en la línea de los constructores de aldeas móviles.
 
+- **Monstruos**: pack CC0 KayKit Skeletons (mismo rig que los aventureros) con sus armas colgadas de los huesos de las manos y animaciones propias (burlas, guardia, muerte desmoronándose, despertar del suelo).
+- **Procedurales**: catapulta con brazo que golpea y se recarga y ruedas que giran al avanzar, cofre con monedas, tótem de calaveras con orbe brillante, hoguera, catres y estandarte de la enfermería.
 - **Modelos**: packs CC0 de KayKit. Cada edificio usa un modelo por nivel (casa → casa grande → taberna; torre A → torre B → torre con catapulta; empalizada → muro de piedra → muralla) y añade *props* al subir de nivel (banderas, torres en el ayuntamiento, barriles, dianas…).
 - **Obras**: cimientos → fase A → B → C con andamio; las mejoras muestran andamio alrededor del edificio.
 - **Aldeanos**: personajes riggeados con 26 animaciones compartidas. Civil = bárbaro con hacha o jarra; guerrero = caballero (casco, capa y escudo mejor según nivel); arquero = pícaro con ballesta; sanador = mago con bastón. Animaciones según la tarea: talar, cosechar, construir, entrenar con espada, disparar, lanzar hechizos, descansar, celebrar el ascenso.
@@ -100,6 +112,7 @@ Estética *low-poly* colorida y cálida, en la línea de los constructores de al
 | 1 | Construcción de la aldea: edificios, economía, aldeanos, entrenamiento de roles, guardado local | ✅ Hecha |
 | 1.5 | Pulido: arte glTF, animaciones, partículas, postprocesado ✅ · sonido y balance pendientes | En curso |
 | 2 | Batalla RTS: simulación de combate en `shared`, IA de unidades y defensas, selección y órdenes, pathfinding | ✅ Hecha |
+| 2.2 | Catapultas y taller de asedio, murallas arrastrando, campamentos de monstruos, enfermería con cura de pago | ✅ Hecha |
 | 2.5 | Servidor autoritativo de batalla (Node + WebSocket), ataques asíncronos contra la IA | Pendiente |
 | 3 | Primera persona: poseer soldados, cambio táctica ↔ FPS, relevo al morir | Pendiente |
 | 4 | Backend completo: cuentas, base de datos, emparejamiento, notificaciones, PvP en vivo del defensor | Pendiente |

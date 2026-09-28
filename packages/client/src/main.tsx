@@ -7,6 +7,7 @@ import { renderThumbnails } from './render/thumbnails';
 import { UiStore } from './ui/UiStore';
 import { App } from './ui/App';
 import { fmtTime } from './ui/format';
+import { availableArmy } from '@cow/shared';
 import './style.css';
 
 const loading = document.getElementById('loading')!;
@@ -42,6 +43,13 @@ async function main() {
   ui.collect = (id) => world.collect(id);
   ui.startBattle = () => world.enterBattle(new BattleController(game, (Date.now() ^ (Math.random() * 1e9)) >>> 0));
   ui.nextOpponent = () => world.enterBattle(new BattleController(game, (Date.now() ^ (Math.random() * 1e9)) >>> 0));
+  ui.attackCamp = (campId) => {
+    if (availableArmy(game.state).length === 0) {
+      ui.toast('No tienes soldados listos. Entrénalos (o sánalos en la enfermería) para atacar a los monstruos.', 'error');
+      return;
+    }
+    world.enterBattle(new BattleController(game, (Date.now() ^ (Math.random() * 1e9)) >>> 0, campId));
+  };
   ui.leaveBattle = () => world.exitBattle();
   ui.simulateAttack = () => world.simulateAttack();
   // Sin preferencia guardada, WebGL 2 arranca en calidad media.

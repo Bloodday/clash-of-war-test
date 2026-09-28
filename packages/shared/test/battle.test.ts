@@ -297,7 +297,8 @@ describe('campamentos de monstruos', () => {
   it('limpiarlo da botín (también de los monstruos) y lo hace desaparecer', () => {
     const s = createInitialState();
     const camp = s.camps[0]!;
-    const b = createBattle(generateMonsterCamp(camp.seed, 1), army('warrior', 'warrior', 'warrior', 'warrior', 'archer', 'archer').map((u) => ({ ...u, level: 3 })), camp.id);
+    const base = generateMonsterCamp(camp.seed, 1);
+    const b = createBattle(base, army('warrior', 'warrior', 'warrior', 'warrior', 'archer', 'archer').map((u) => ({ ...u, level: 3 })), camp.id);
     [[2, 2], [2, 3], [3, 2], [37, 37], [37, 36], [36, 37]].forEach(([x, y], i) => executeBattleCommand(b, { type: 'deploy', villagerId: 100 + i, x: x!, y: y! }));
     let monsterLoot = 0;
     for (let i = 0; i < 180 * BATTLE_TICK_RATE && b.phase !== 'ended'; i++) {
@@ -307,6 +308,8 @@ describe('campamentos de monstruos', () => {
     expect(b.result!.cleared).toBe(true);
     expect(b.stars).toBeGreaterThanOrEqual(2);
     expect(monsterLoot).toBeGreaterThan(0);
+    // El botín anunciado incluye lo que llevan los monstruos: arrasarlo lo da entero.
+    for (const r of ['gold', 'wood', 'food'] as const) expect(b.lootTaken[r] ?? 0).toBe(baseLoot(base)[r]);
     applyBattleResult(s, b.result!);
     expect(s.camps.find((c) => c.id === camp.id)).toBeUndefined();
   });

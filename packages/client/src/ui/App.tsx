@@ -24,10 +24,14 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
   const selected = ui.selectedId !== null ? state.buildings.find((b) => b.id === ui.selectedId) : undefined;
   const mode = ui.mode;
 
-  let hint = 'Pasa el ratón por las burbujas para recolectar · Clic: seleccionar · Arrastrar: desplazar · Clic derecho: rotar · Rueda: zoom';
+  let hint =
+    'Pasa el ratón por las burbujas para recolectar · Clic: seleccionar · Arrastrar: desplazar · Clic derecho: rotar · Rueda: zoom · 💀 Ataca campamentos de monstruos en el bosque';
   if (mode.kind === 'place') {
     const name = BUILDING_DEFS[mode.building].name;
-    hint = `Colocando ${name} · Clic para construir${mode.building === 'wall' ? ' (en cadena)' : ' · Mayús: en cadena'} · Esc o clic derecho: cancelar`;
+    hint =
+      mode.building === 'wall'
+        ? `Colocando ${name} · Clic o arrastra para trazar una línea recta · Esc o clic derecho: cancelar`
+        : `Colocando ${name} · Clic para construir · Mayús: en cadena · Esc o clic derecho: cancelar`;
   } else if (mode.kind === 'move') {
     hint = 'Moviendo edificio · Clic en el destino · Esc o clic derecho: cancelar';
   }
@@ -95,7 +99,7 @@ export function App({ game, ui }: { game: GameController; ui: UiStore }) {
           <button
             class="big attack"
             disabled={army === 0}
-            title={army === 0 ? 'Entrena soldados (cuartel, campo de tiro o templo) para atacar' : `${army} soldados listos`}
+            title={army === 0 ? 'Entrena soldados (cuartel, campo de tiro, templo o taller de asedio) para atacar' : `${army} soldados listos`}
             onClick={() => {
               setBuildOpen(false);
               setVillagersOpen(false);

@@ -114,7 +114,7 @@ try {
   await page.evaluate(() => {
     const s = window.game.state;
     let id = 9000;
-    for (const [role, n] of [['warrior', 4], ['archer', 3], ['healer', 1]]) {
+    for (const [role, n] of [['warrior', 4], ['archer', 3], ['healer', 1], ['catapult', 1]]) {
       for (let i = 0; i < n; i++) s.villagers.push({ id: id++, name: `${role}${i}`, role, roleLevel: 2, task: { kind: 'idle' } });
     }
     window.ui.startBattle();
@@ -128,13 +128,73 @@ try {
     b.speed = 40;
   });
   const deployed = await page.evaluate(() => window.ui.battle.state.units.filter((u) => u.side === 'attacker').length);
-  if (deployed < 8) fail(`solo se desplegaron ${deployed} tropas`);
+  if (deployed < 9) fail(`solo se desplegaron ${deployed} tropas`);
   await page.waitForFunction(() => window.ui.battle && window.ui.battle.summary, null, { timeout: 300_000 });
   const summary = await page.evaluate(() => window.ui.battle.summary);
-  console.log(`· batalla: ${summary.stars}★ ${Math.round(summary.destruction * 100)}% · heridos: ${summary.fallen.length}`);
+  console.log(`· batalla: ${summary.stars}★ ${Math.round(summary.destruction * 100)}% · heridos: ${summary.wounded.length} · muertos: ${summary.dead.length}`);
   await page.screenshot({ path: join(OUT, 'smoke-battle.png') });
   await page.evaluate(() => window.ui.leaveBattle());
   if (await page.evaluate(() => !!window.ui.battle)) fail('no se volvió a la aldea');
+
+  // Campamento de monstruos: atacarlo desde su etiqueta y arrasarlo.
+  await page.waitForSelector('.marker', { state: 'attached', timeout: 30_000 });
+  const campId = await page.evaluate(() => {
+    const s = window.game.state;
+    let id = 9100;
+    for (let i = 0; i < 6; i++) s.villagers.push({ id: id++, name: `veterano${i}`, role: i < 4 ? 'warrior' : 'archer', roleLevel: 3, task: { kind: 'idle' } });
+    return s.camps[0].id;
+  });
+  // Cámara sobre el campamento para que su etiqueta quede a la vista.
+  await page.evaluate(() => {
+    const p = [...window.world.camps.views.values()][0].root.position;
+    window.world.controls.target.set(p.x, 0, p.z);
+    window.world.camera.position.set(p.x, p.y + 10, p.z + 10);
+  });
+  await page.waitForTimeout(1000);
+  await page.locator('.marker').first().click();
+  const kind = await page.evaluate(() => window.ui.battle?.state.kind);
+  if (kind !== 'camp') fail(`se esperaba una batalla de campamento (${kind})`);
+  await page.evaluate(() => {
+    const b = window.ui.battle;
+    let y = 1;
+    for (const r of [...b.state.reserve]) {
+      let res = b.dispatch({ type: 'deploy', villagerId: r.villagerId, x: 0.6, y });
+      while (!res.ok && y < 39) res = b.dispatch({ type: 'deploy', villagerId: r.villagerId, x: 0.6, y: (y += 0.7) });
+      y += 0.7;
+    }
+    b.speed = 40;
+  });
+  await page.waitForFunction(() => window.ui.battle && window.ui.battle.summary, null, { timeout: 300_000 });
+  const camp = await page.evaluate(() => window.ui.battle.summary);
+  console.log(`· campamento: ${camp.stars}★ · arrasado: ${camp.campCleared} · botín ${JSON.stringify(camp.gained)}`);
+  await page.evaluate(() => window.ui.leaveBattle());
+  if (camp.campCleared && (await page.evaluate((id) => window.game.state.camps.some((c) => c.id === id), campId))) fail('el campamento arrasado sigue en el mapa');
+
+  // Enfermería: un herido que no se cura solo hasta que se paga su cura.
+  await page.evaluate(() => {
+    const s = window.game.state;
+    s.resources.food = 1000;
+    s.resources.gold = 1000;
+    s.resources.wood = 1000;
+    const r = window.game.dispatch({ type: 'placeBuilding', building: 'infirmary', x: 27, y: 27 });
+    if (!r.ok) throw new Error(`enfermería: ${r.error}`);
+    window.game.speed = 20;
+  });
+  await page.waitForFunction(() => window.game.state.buildings.some((b) => b.type === 'infirmary' && b.level === 1), null, { timeout: 120_000 });
+  const healed = await page.evaluate(() => {
+    const s = window.game.state;
+    const inf = s.buildings.find((b) => b.type === 'infirmary');
+    s.villagers.push({ id: 9200, name: 'Herido', role: 'warrior', roleLevel: 1, task: { kind: 'wounded', infirmaryId: inf.id } });
+    window.ui.select(inf.id);
+    return inf.id;
+  });
+  await page.getByRole('button', { name: /Sanar 1 herido/ }).click();
+  await page.waitForFunction(() => window.game.state.villagers.find((v) => v.id === 9200)?.task.kind === 'idle', null, { timeout: 120_000 });
+  await page.evaluate(() => {
+    window.game.speed = 1;
+    window.ui.select(null);
+  });
+  console.log(`· enfermería ${healed}: herido curado tras pagar`);
 
   await page.waitForFunction(() => window.ui.thumbnails.size > 0, null, { timeout: 180_000 });
   console.log(`· miniaturas: ${await page.evaluate(() => window.ui.thumbnails.size)}`);
